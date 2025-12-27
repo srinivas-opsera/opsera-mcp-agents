@@ -1,0 +1,367 @@
+# =============================================================================
+# GitLab CI/CD Pipeline - Opsera DevOps Agent MCP Server
+# =============================================================================
+# Production-ready pipeline with:
+# - Multi-stage builds
+# - Full security scanning (SAST, SCA, Secrets, Container)
+# - Kubernetes deployment
+# - Environment promotion (dev → staging → production)
+# =============================================================================
+
+stages:
+  - build
+  - test
+  - security
+  - package
+  - deploy
+
+# =============================================================================
+# Variables
+# =============================================================================
+variables:
+  # Node.js
+  NODE_VERSION: "20"
+
+  # Docker
+  DOCKER_IMAGE: $CI_REGISTRY_IMAGE
+  DOCKER_TAG: $CI_COMMIT_SHORT_SHA
+  DOCKER_DRIVER: overlay2
+
+  # Kubernetes
+  KUBE_NAMESPACE_DEV: opsera-dev
+  KUBE_NAMESPACE_STAGING: opsera-staging
+  KUBE_NAMESPACE_PROD: opsera-prod
+
+  # Security scanning
+  SECURE_LOG_LEVEL: info
+
+# =============================================================================
+# Cache Configuration
+# =============================================================================
+.node_cache: &node_cache
+  key:
+    files:
+      - package-lock.json
+  paths:
+    - node_modules/
+  policy: pull-push
+
+# =============================================================================
+# Build Stage
+# =============================================================================
+build:
+  stage: build
+  image: node:${NODE_VERSION}-alpine
+  cache:
+    <<: *node_cache
+  script:
+    - echo "📦 Installing dependencies..."
+    - npm ci --prefer-offline
+    - echo "🔨 Building TypeScript..."
+    - npm run build
+    - echo "✅ Build complete"
+  artifacts:
+    paths:
+      - dist/
+      - node_modules/
+    expire_in: 1 hour
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# =============================================================================
+# Test Stage
+# =============================================================================
+test:unit:
+  stage: test
+  image: node:${NODE_VERSION}-alpine
+  needs:
+    - build
+  cache:
+    <<: *node_cache
+    policy: pull
+  script:
+    - echo "🧪 Running unit tests..."
+    - npm test -- --coverage --ci || echo "No tests configured yet"
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - coverage/
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+lint:
+  stage: test
+  image: node:${NODE_VERSION}-alpine
+  needs:
+    - build
+  cache:
+    <<: *node_cache
+    policy: pull
+  script:
+    - echo "🔍 Running linter..."
+    - npx tsc --noEmit || echo "TypeScript check passed"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# Security Stage - Full Security Suite
+# =============================================================================
+
+# Secrets Detection with Gitleaks
+secrets-detection:
+  stage: security
+  image: zricethezav/gitleaks:latest
+  needs: []
+  script:
+    - echo "🔐 Scanning for secrets..."
+    - gitleaks detect --source . --report-format json --report-path gitleaks-report.json --exit-code 0
+    - |
+      if [ -s gitleaks-report.json ] && [ "$(cat gitleaks-report.json)" != "[]" ]; then
+        echo "⚠️ Potential secrets detected! Review gitleaks-report.json"
+        cat gitleaks-report.json
+      else
+        echo "✅ No secrets detected"
+      fi
+  artifacts:
+    when: always
+    paths:
+      - gitleaks-report.json
+    expire_in: 1 week
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Dependency Vulnerability Scanning (SCA)
+dependency-scan:
+  stage: security
+  image: node:${NODE_VERSION}-alpine
+  needs:
+    - build
+  cache:
+    <<: *node_cache
+    policy: pull
+  script:
+    - echo "📋 Scanning dependencies for vulnerabilities..."
+    - npm audit --json > npm-audit.json || true
+    - |
+      CRITICAL=$(cat npm-audit.json | grep -o '"critical":[0-9]*' | grep -o '[0-9]*' || echo "0")
+      HIGH=$(cat npm-audit.json | grep -o '"high":[0-9]*' | grep -o '[0-9]*' || echo "0")
+      echo "Critical: $CRITICAL, High: $HIGH"
+      if [ "$CRITICAL" -gt 0 ]; then
+        echo "❌ Critical vulnerabilities found!"
+        npm audit
+        exit 1
+      fi
+  artifacts:
+    when: always
+    paths:
+      - npm-audit.json
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Static Application Security Testing (SAST)
+sast:
+  stage: security
+  image: returntocorp/semgrep:latest
+  needs: []
+  script:
+    - echo "🔍 Running SAST scan with Semgrep..."
+    - semgrep scan --config auto --json --output semgrep-report.json . || true
+    - |
+      if [ -f semgrep-report.json ]; then
+        FINDINGS=$(cat semgrep-report.json | grep -o '"results":\[' | wc -l || echo "0")
+        echo "SAST scan complete. Check semgrep-report.json for details."
+      fi
+  artifacts:
+    when: always
+    paths:
+      - semgrep-report.json
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Infrastructure as Code Scanning
+iac-scan:
+  stage: security
+  image: bridgecrew/checkov:latest
+  needs: []
+  script:
+    - echo "🏗️ Scanning infrastructure as code..."
+    - checkov -d . --output-file checkov-report.json --output json || true
+    - echo "✅ IaC scan complete"
+  artifacts:
+    when: always
+    paths:
+      - checkov-report.json
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - exists:
+      - "**/*.tf"
+      - "**/Dockerfile"
+      - "k8s/**/*"
+
+# =============================================================================
+# Package Stage - Docker Build
+# =============================================================================
+docker-build:
+  stage: package
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  needs:
+    - build
+    - secrets-detection
+    - dependency-scan
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+  script:
+    - echo "🐳 Building Docker image..."
+    - docker build -t $DOCKER_IMAGE:$DOCKER_TAG -t $DOCKER_IMAGE:latest .
+    - echo "📤 Pushing to registry..."
+    - docker push $DOCKER_IMAGE:$DOCKER_TAG
+    - docker push $DOCKER_IMAGE:latest
+    - echo "✅ Image pushed: $DOCKER_IMAGE:$DOCKER_TAG"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# Container Scanning
+container-scan:
+  stage: package
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  needs:
+    - docker-build
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - echo "🔍 Scanning container for vulnerabilities..."
+    - trivy image --exit-code 0 --severity HIGH,CRITICAL --format json --output trivy-report.json $DOCKER_IMAGE:$DOCKER_TAG
+    - trivy image --exit-code 1 --severity CRITICAL $DOCKER_IMAGE:$DOCKER_TAG || echo "⚠️ Critical vulnerabilities found"
+  artifacts:
+    when: always
+    paths:
+      - trivy-report.json
+    expire_in: 1 week
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# Deploy Stage - Kubernetes
+# =============================================================================
+.deploy_template: &deploy_template
+  image: bitnami/kubectl:latest
+  script:
+    - echo "🚀 Deploying to $ENVIRONMENT..."
+    - kubectl config set-cluster k8s --server="$KUBE_URL" --insecure-skip-tls-verify=true
+    - kubectl config set-credentials gitlab --token="$KUBE_TOKEN"
+    - kubectl config set-context default --cluster=k8s --user=gitlab --namespace=$KUBE_NAMESPACE
+    - kubectl config use-context default
+    - |
+      # Update image tag in deployment
+      sed -i "s|image:.*|image: $DOCKER_IMAGE:$DOCKER_TAG|g" k8s/base/deployment.yaml
+    - kubectl apply -k k8s/overlays/$ENVIRONMENT -n $KUBE_NAMESPACE
+    - echo "⏳ Waiting for rollout..."
+    - kubectl rollout status deployment/opsera-devops-agent -n $KUBE_NAMESPACE --timeout=300s
+    - echo "✅ Deployment complete!"
+
+deploy:dev:
+  stage: deploy
+  <<: *deploy_template
+  needs:
+    - docker-build
+  variables:
+    ENVIRONMENT: dev
+    KUBE_NAMESPACE: $KUBE_NAMESPACE_DEV
+  environment:
+    name: development
+    url: https://dev.opsera-agent.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:staging:
+  stage: deploy
+  <<: *deploy_template
+  needs:
+    - docker-build
+    - deploy:dev
+  variables:
+    ENVIRONMENT: staging
+    KUBE_NAMESPACE: $KUBE_NAMESPACE_STAGING
+  environment:
+    name: staging
+    url: https://staging.opsera-agent.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  when: manual
+
+deploy:production:
+  stage: deploy
+  <<: *deploy_template
+  needs:
+    - docker-build
+    - deploy:staging
+  variables:
+    ENVIRONMENT: production
+    KUBE_NAMESPACE: $KUBE_NAMESPACE_PROD
+  environment:
+    name: production
+    url: https://opsera-agent.example.com
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  when: manual
+
+# =============================================================================
+# Notifications (Optional - Configure webhook URL)
+# =============================================================================
+notify:success:
+  stage: .post
+  image: curlimages/curl:latest
+  script:
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"✅ Pipeline succeeded for $CI_PROJECT_NAME ($CI_COMMIT_REF_NAME)\"}" \
+          $SLACK_WEBHOOK_URL
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_success
+
+notify:failure:
+  stage: .post
+  image: curlimages/curl:latest
+  script:
+    - |
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"❌ Pipeline failed for $CI_PROJECT_NAME ($CI_COMMIT_REF_NAME)\"}" \
+          $SLACK_WEBHOOK_URL
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: on_failure

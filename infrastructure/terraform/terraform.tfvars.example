@@ -1,0 +1,34 @@
+# Opsera DevOps Agent - Terraform Variables Example
+# Copy this file to terraform.tfvars and update values
+
+aws_region      = "us-east-1"
+environment     = "production"
+app_name        = "opsera-devops-agent"
+container_port  = 3847
+
+# Task sizing (adjust based on load)
+task_cpu    = 256   # 0.25 vCPU
+task_memory = 512   # 512 MB
+
+# Scaling configuration
+desired_count = 2
+min_count     = 1
+max_count     = 10
+
+# API Key - CHANGE THIS IN PRODUCTION!
+# Generate with: openssl rand -hex 32
+api_key = "opsera-production-key-change-me"
+
+# Optional: ACM Certificate ARN for HTTPS
+# Create certificate in AWS Certificate Manager first
+# certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxxxx"
+
+
+
+
+
+
+
+
+
+

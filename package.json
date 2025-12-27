@@ -1,0 +1,29 @@
+{
+  "name": "opsera-devops-agent-mcp-server",
+  "version": "1.0.0",
+  "description": "Opsera DevOps Agent - MCP Server with SSE Transport",
+  "private": true,
+  "type": "module",
+  "main": "dist/http-server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/http-server.js",
+    "dev": "tsx src/http-server.ts",
+    "deploy": "./scripts/deploy.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "cors": "^2.8.5",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
