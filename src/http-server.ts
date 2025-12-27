@@ -665,8 +665,19 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok", version: "1.0.0", server: "opsera-devops-agent" });
 });
 
+// Store heartbeat intervals for cleanup
+const heartbeatIntervals: Map<string, NodeJS.Timeout> = new Map();
+
+// Heartbeat interval in milliseconds (25 seconds - below typical ALB 60s timeout)
+const HEARTBEAT_INTERVAL = 25000;
+
 app.get("/sse", authenticate, async (req: Request, res: Response) => {
   console.log("New SSE connection");
+  
+  // Set SSE-specific headers to prevent buffering and keep connection alive
+  res.setHeader("X-Accel-Buffering", "no"); // Disable nginx buffering
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
   
   const transport = new SSEServerTransport("/message", res);
   transports.set(transport.sessionId, transport);
@@ -674,8 +685,31 @@ app.get("/sse", authenticate, async (req: Request, res: Response) => {
 
   const server = createMCPServer();
 
+  // Set up heartbeat to keep connection alive
+  const heartbeatInterval = setInterval(() => {
+    try {
+      // Send SSE comment as heartbeat (doesn't affect MCP protocol)
+      res.write(": heartbeat\n\n");
+      console.log(`Heartbeat sent for session: ${transport.sessionId}`);
+    } catch (error) {
+      console.error(`Heartbeat failed for session ${transport.sessionId}:`, error);
+      clearInterval(heartbeatInterval);
+      heartbeatIntervals.delete(transport.sessionId);
+    }
+  }, HEARTBEAT_INTERVAL);
+  
+  heartbeatIntervals.set(transport.sessionId, heartbeatInterval);
+
   res.on("close", () => {
     console.log(`Session closed: ${transport.sessionId}`);
+    
+    // Clean up heartbeat interval
+    const interval = heartbeatIntervals.get(transport.sessionId);
+    if (interval) {
+      clearInterval(interval);
+      heartbeatIntervals.delete(transport.sessionId);
+    }
+    
     transports.delete(transport.sessionId);
   });
 

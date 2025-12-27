@@ -25,6 +25,21 @@ output "api_endpoint" {
   value       = "http://${aws_lb.main.dns_name}"
 }
 
+output "api_endpoint_https" {
+  description = "API endpoint URL (HTTPS) - only available if domain_name is configured"
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : null
+}
+
+output "domain_name" {
+  description = "Custom domain name (if configured)"
+  value       = var.domain_name != "" ? var.domain_name : null
+}
+
+output "certificate_arn" {
+  description = "ACM Certificate ARN (if created)"
+  value       = var.domain_name != "" && var.create_certificate ? aws_acm_certificate.main[0].arn : null
+}
+
 output "ecs_cluster_name" {
   description = "Name of the ECS cluster"
   value       = aws_ecs_cluster.main.name

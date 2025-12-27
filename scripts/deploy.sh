@@ -123,16 +123,59 @@ update_ecs_service() {
 print_info() {
     cd "$TERRAFORM_DIR"
     API_ENDPOINT=$(terraform output -raw api_endpoint 2>/dev/null || echo "")
+    API_ENDPOINT_HTTPS=$(terraform output -raw api_endpoint_https 2>/dev/null || echo "")
+    DOMAIN_NAME=$(terraform output -raw domain_name 2>/dev/null || echo "")
     
     echo -e "\n${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BLUE}║  Deployment Complete!                                         ║${NC}"
     echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
     
-    echo -e "\n${GREEN}API Endpoint:${NC} $API_ENDPOINT"
-    echo -e "\n${YELLOW}Test the deployment:${NC}"
-    echo -e "  curl $API_ENDPOINT/health"
-    echo -e "\n${YELLOW}MCP SSE Endpoint:${NC}"
-    echo -e "  $API_ENDPOINT/sse"
+    echo -e "\n${GREEN}API Endpoint (HTTP):${NC} $API_ENDPOINT"
+    
+    if [ -n "$API_ENDPOINT_HTTPS" ] && [ "$API_ENDPOINT_HTTPS" != "null" ]; then
+        echo -e "${GREEN}API Endpoint (HTTPS):${NC} $API_ENDPOINT_HTTPS"
+        echo -e "${GREEN}Custom Domain:${NC} $DOMAIN_NAME"
+        echo -e "\n${YELLOW}Test the deployment:${NC}"
+        echo -e "  curl $API_ENDPOINT_HTTPS/health"
+        echo -e "\n${YELLOW}MCP SSE Endpoint (use this in Cursor):${NC}"
+        echo -e "  $API_ENDPOINT_HTTPS/sse"
+    else
+        echo -e "\n${YELLOW}Test the deployment:${NC}"
+        echo -e "  curl $API_ENDPOINT/health"
+        echo -e "\n${YELLOW}MCP SSE Endpoint:${NC}"
+        echo -e "  $API_ENDPOINT/sse"
+    fi
+    
+    echo -e "\n${YELLOW}Cursor MCP Configuration (~/.cursor/mcp.json):${NC}"
+    if [ -n "$API_ENDPOINT_HTTPS" ] && [ "$API_ENDPOINT_HTTPS" != "null" ]; then
+        cat << EOF
+{
+  "mcpServers": {
+    "opsera-devops-agent": {
+      "type": "sse",
+      "url": "$API_ENDPOINT_HTTPS/sse",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+EOF
+    else
+        cat << EOF
+{
+  "mcpServers": {
+    "opsera-devops-agent": {
+      "type": "sse",
+      "url": "$API_ENDPOINT/sse",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}
+EOF
+    fi
 }
 
 # Main

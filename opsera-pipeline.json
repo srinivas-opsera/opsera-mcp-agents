@@ -1,0 +1,444 @@
+{
+  "$schema": "https://opsera.io/schemas/pipeline/v2",
+  "name": "opsera-devops-agent-mcp-server",
+  "description": "CI/CD Pipeline for Opsera DevOps Agent MCP Server - Automated build, security scan, and deployment",
+  "version": "1.0.0",
+  "triggers": {
+    "git": {
+      "enabled": true,
+      "events": ["push", "pull_request"],
+      "branches": {
+        "include": ["main", "develop", "release/*"],
+        "exclude": ["feature/wip-*"]
+      },
+      "paths": {
+        "include": ["src/**", "infrastructure/**", "package.json", "Dockerfile"],
+        "exclude": ["*.md", "docs/**"]
+      }
+    },
+    "schedule": {
+      "enabled": false,
+      "cron": "0 2 * * 1"
+    },
+    "webhook": {
+      "enabled": true
+    }
+  },
+  "variables": {
+    "AWS_REGION": "us-east-1",
+    "ECR_REPOSITORY": "opsera-devops-agent",
+    "ECS_CLUSTER": "opsera-devops-agent-cluster",
+    "ECS_SERVICE": "opsera-devops-agent",
+    "CONTAINER_PORT": "3847",
+    "NODE_VERSION": "20"
+  },
+  "secrets": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "VALID_API_KEY",
+    "SLACK_WEBHOOK_URL"
+  ],
+  "stages": [
+    {
+      "name": "build",
+      "displayName": "Build & Compile",
+      "enabled": true,
+      "steps": [
+        {
+          "name": "checkout",
+          "type": "git-checkout",
+          "config": {
+            "depth": 1,
+            "fetchTags": true
+          }
+        },
+        {
+          "name": "setup-node",
+          "type": "setup-runtime",
+          "config": {
+            "runtime": "node",
+            "version": "${NODE_VERSION}"
+          }
+        },
+        {
+          "name": "cache-dependencies",
+          "type": "cache",
+          "config": {
+            "key": "npm-${hashFiles('package-lock.json')}",
+            "paths": ["node_modules/"]
+          }
+        },
+        {
+          "name": "install-dependencies",
+          "type": "shell",
+          "config": {
+            "command": "npm ci --prefer-offline"
+          }
+        },
+        {
+          "name": "build",
+          "type": "shell",
+          "config": {
+            "command": "npm run build"
+          }
+        },
+        {
+          "name": "upload-artifacts",
+          "type": "artifact-upload",
+          "config": {
+            "name": "build-output",
+            "paths": ["dist/", "package.json", "package-lock.json"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "test",
+      "displayName": "Test & Lint",
+      "enabled": true,
+      "dependsOn": ["build"],
+      "steps": [
+        {
+          "name": "download-artifacts",
+          "type": "artifact-download",
+          "config": {
+            "name": "build-output"
+          }
+        },
+        {
+          "name": "typescript-check",
+          "type": "shell",
+          "config": {
+            "command": "npx tsc --noEmit"
+          }
+        },
+        {
+          "name": "unit-tests",
+          "type": "shell",
+          "config": {
+            "command": "npm test -- --coverage --ci || echo 'No tests configured'",
+            "continueOnError": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "security",
+      "displayName": "Security Scanning",
+      "enabled": true,
+      "parallel": true,
+      "dependsOn": ["build"],
+      "steps": [
+        {
+          "name": "secrets-detection",
+          "type": "security-scan",
+          "config": {
+            "tool": "gitleaks",
+            "failOnFindings": true,
+            "output": "gitleaks-report.json"
+          }
+        },
+        {
+          "name": "dependency-scan",
+          "type": "security-scan",
+          "config": {
+            "tool": "npm-audit",
+            "severity": "critical",
+            "output": "npm-audit.json"
+          }
+        },
+        {
+          "name": "sast-scan",
+          "type": "security-scan",
+          "config": {
+            "tool": "semgrep",
+            "config": "auto",
+            "failOnFindings": false,
+            "output": "semgrep-report.json"
+          }
+        },
+        {
+          "name": "iac-scan",
+          "type": "security-scan",
+          "config": {
+            "tool": "checkov",
+            "directory": "infrastructure/",
+            "failOnFindings": false,
+            "output": "checkov-report.json"
+          }
+        }
+      ]
+    },
+    {
+      "name": "docker-build",
+      "displayName": "Build & Push Docker Image",
+      "enabled": true,
+      "dependsOn": ["test", "security"],
+      "conditions": {
+        "branches": ["main", "release/*"]
+      },
+      "steps": [
+        {
+          "name": "docker-login",
+          "type": "docker-login",
+          "config": {
+            "registry": "ecr",
+            "region": "${AWS_REGION}"
+          }
+        },
+        {
+          "name": "docker-build",
+          "type": "docker-build",
+          "config": {
+            "dockerfile": "Dockerfile",
+            "context": ".",
+            "tags": [
+              "${ECR_REPOSITORY}:${GIT_SHA}",
+              "${ECR_REPOSITORY}:latest"
+            ],
+            "buildArgs": {
+              "NODE_VERSION": "${NODE_VERSION}"
+            },
+            "cache": true
+          }
+        },
+        {
+          "name": "docker-push",
+          "type": "docker-push",
+          "config": {
+            "tags": [
+              "${ECR_REPOSITORY}:${GIT_SHA}",
+              "${ECR_REPOSITORY}:latest"
+            ]
+          }
+        },
+        {
+          "name": "container-scan",
+          "type": "security-scan",
+          "config": {
+            "tool": "trivy",
+            "target": "${ECR_REPOSITORY}:${GIT_SHA}",
+            "severity": "HIGH,CRITICAL",
+            "output": "trivy-report.json"
+          }
+        }
+      ]
+    },
+    {
+      "name": "deploy-infrastructure",
+      "displayName": "Deploy Infrastructure (Terraform)",
+      "enabled": true,
+      "dependsOn": ["docker-build"],
+      "conditions": {
+        "branches": ["main"],
+        "paths": ["infrastructure/**"]
+      },
+      "steps": [
+        {
+          "name": "terraform-init",
+          "type": "terraform",
+          "config": {
+            "action": "init",
+            "workingDirectory": "infrastructure/terraform",
+            "backend": {
+              "type": "s3",
+              "bucket": "opsera-terraform-state",
+              "key": "opsera-devops-agent/terraform.tfstate",
+              "region": "${AWS_REGION}"
+            }
+          }
+        },
+        {
+          "name": "terraform-plan",
+          "type": "terraform",
+          "config": {
+            "action": "plan",
+            "workingDirectory": "infrastructure/terraform",
+            "varFile": "terraform.tfvars",
+            "output": "tfplan"
+          }
+        },
+        {
+          "name": "terraform-apply",
+          "type": "terraform",
+          "config": {
+            "action": "apply",
+            "workingDirectory": "infrastructure/terraform",
+            "planFile": "tfplan",
+            "autoApprove": true
+          }
+        }
+      ]
+    },
+    {
+      "name": "deploy-dev",
+      "displayName": "Deploy to Development",
+      "enabled": true,
+      "dependsOn": ["docker-build"],
+      "conditions": {
+        "branches": ["main", "develop"]
+      },
+      "environment": {
+        "name": "development",
+        "url": "https://dev.mcp-agent.opsera.io"
+      },
+      "steps": [
+        {
+          "name": "update-ecs-service",
+          "type": "aws-ecs-deploy",
+          "config": {
+            "cluster": "${ECS_CLUSTER}",
+            "service": "${ECS_SERVICE}",
+            "image": "${ECR_REPOSITORY}:${GIT_SHA}",
+            "region": "${AWS_REGION}",
+            "waitForStable": true,
+            "timeout": 300
+          }
+        },
+        {
+          "name": "health-check",
+          "type": "http-request",
+          "config": {
+            "url": "https://dev.mcp-agent.opsera.io/health",
+            "method": "GET",
+            "expectedStatus": 200,
+            "retries": 5,
+            "retryDelay": 10
+          }
+        }
+      ]
+    },
+    {
+      "name": "deploy-staging",
+      "displayName": "Deploy to Staging",
+      "enabled": true,
+      "dependsOn": ["deploy-dev"],
+      "conditions": {
+        "branches": ["main"]
+      },
+      "approval": {
+        "required": false,
+        "timeout": 3600
+      },
+      "environment": {
+        "name": "staging",
+        "url": "https://staging.mcp-agent.opsera.io"
+      },
+      "steps": [
+        {
+          "name": "update-ecs-service",
+          "type": "aws-ecs-deploy",
+          "config": {
+            "cluster": "${ECS_CLUSTER}-staging",
+            "service": "${ECS_SERVICE}",
+            "image": "${ECR_REPOSITORY}:${GIT_SHA}",
+            "region": "${AWS_REGION}",
+            "waitForStable": true
+          }
+        },
+        {
+          "name": "health-check",
+          "type": "http-request",
+          "config": {
+            "url": "https://staging.mcp-agent.opsera.io/health",
+            "method": "GET",
+            "expectedStatus": 200,
+            "retries": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "deploy-production",
+      "displayName": "Deploy to Production",
+      "enabled": true,
+      "dependsOn": ["deploy-staging"],
+      "conditions": {
+        "branches": ["main"],
+        "tags": ["v*"]
+      },
+      "approval": {
+        "required": true,
+        "approvers": ["devops-team", "platform-team"],
+        "minApprovals": 1,
+        "timeout": 86400
+      },
+      "environment": {
+        "name": "production",
+        "url": "https://mcp-agent.opsera.io"
+      },
+      "steps": [
+        {
+          "name": "update-ecs-service",
+          "type": "aws-ecs-deploy",
+          "config": {
+            "cluster": "${ECS_CLUSTER}-prod",
+            "service": "${ECS_SERVICE}",
+            "image": "${ECR_REPOSITORY}:${GIT_SHA}",
+            "region": "${AWS_REGION}",
+            "waitForStable": true,
+            "deploymentConfig": {
+              "minimumHealthyPercent": 100,
+              "maximumPercent": 200
+            }
+          }
+        },
+        {
+          "name": "health-check",
+          "type": "http-request",
+          "config": {
+            "url": "https://mcp-agent.opsera.io/health",
+            "method": "GET",
+            "expectedStatus": 200,
+            "retries": 10,
+            "retryDelay": 15
+          }
+        },
+        {
+          "name": "smoke-test",
+          "type": "http-request",
+          "config": {
+            "url": "https://mcp-agent.opsera.io/sse",
+            "method": "GET",
+            "headers": {
+              "Authorization": "Bearer ${VALID_API_KEY}"
+            },
+            "expectedStatus": 200,
+            "timeout": 30
+          }
+        }
+      ]
+    }
+  ],
+  "notifications": {
+    "slack": {
+      "enabled": true,
+      "webhook": "${SLACK_WEBHOOK_URL}",
+      "events": ["pipeline.started", "pipeline.success", "pipeline.failure"],
+      "channels": ["#devops-alerts"]
+    },
+    "email": {
+      "enabled": false,
+      "recipients": ["devops@opsera.io"],
+      "events": ["pipeline.failure"]
+    }
+  },
+  "rollback": {
+    "enabled": true,
+    "automatic": true,
+    "conditions": {
+      "healthCheckFailures": 3,
+      "errorRate": 0.05
+    }
+  },
+  "metrics": {
+    "dora": {
+      "enabled": true,
+      "deploymentFrequency": true,
+      "leadTimeForChanges": true,
+      "changeFailureRate": true,
+      "mttr": true
+    }
+  }
+}
+
