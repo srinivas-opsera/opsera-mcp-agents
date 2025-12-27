@@ -19,8 +19,20 @@ max_count     = 10
 # Generate with: openssl rand -hex 32
 api_key = "opsera-production-key-change-me"
 
-# VPC Configuration
-vpc_id = "vpc-008d194c7dbbb8eae"
+# VPC Configuration - dev VPC (fetched from AWS)
+vpc_id = "vpc-0a0799fb5a48793d6"
+
+# Public subnets for ALB
+public_subnet_ids = [
+  "subnet-00fc02fe051c461ee",  # pub-1-dev (us-east-1a)
+  "subnet-008a9a9c5ecccd0a1"   # pub-2-dev (us-east-1b)
+]
+
+# Private subnets for ECS tasks
+private_subnet_ids = [
+  "subnet-02aaca51e4762631d",  # priv-1-dev (us-east-1a)
+  "subnet-07277c89ab3a473cc"   # priv-2-dev (us-east-1b)
+]
 
 # =============================================================================
 # Route 53 / DNS Configuration (Optional but recommended)
