@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Opsera MCP Agents - Terraform Variables Example
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Copy this file to terraform.tfvars and update values as needed.
+# Note: Opsera pipeline will override these values during execution.
+#
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# General Configuration
+aws_region   = "us-east-1"
+environment  = "dev"
+project_name = "opsera-mcp-agents"
+
+# Networking
+vpc_cidr             = "10.0.0.0/16"
+availability_zones   = ["us-east-1a", "us-east-1b"]
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24"]
+
+# ECS Configuration
+ecs_cluster_name = "opsera-mcp-cluster"
+container_port   = 3847
+container_cpu    = 256
+container_memory = 512
+desired_count    = 1
+
+# ECR Configuration
+ecr_repository_name = "opsera-mcp-agents"
+image_tag           = "latest"
+
+# Additional Tags
+additional_tags = {
+  Team        = "platform"
+  CostCenter  = "devops"
+}
+
