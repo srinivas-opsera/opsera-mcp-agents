@@ -19,9 +19,13 @@ S3_BUCKET="opsera-agentic-s3-v1"
 S3_KEY="opsera-mcp-agents/eks-terraform.tfstate"
 CLUSTER_NAME="opsera-mcp-dev"
 
-# AWS Credentials (injected by Opsera or set manually)
-export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-AKIA3Q7I6RPKMB64IWZG}"
-export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-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}"
+# AWS Credentials - must be set via environment variables
+# DO NOT hardcode credentials in scripts!
+if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+    echo "ERROR: AWS credentials not set!"
+    echo "Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables"
+    exit 1
+fi
 export AWS_DEFAULT_REGION="${AWS_REGION}"
 export AWS_REGION="${AWS_REGION}"
 
