@@ -59,21 +59,70 @@ POST /api/v2/pipeline/create
 
 ## Native Terraform Tool Configuration
 
-### Known Issues
-1. `terraformVersion` field may not set the Docker image tag
-2. Use `tag: "1.6.0"` instead of `terraformVersion: "1.6.0"`
-3. Empty backend blocks in `backend.tf` cause silent failures
+### ⚠️ CRITICAL: Use `tag` NOT `terraformVersion`
 
-### Working Configuration
+Using `terraformVersion: "1.6"` results in Docker image `hashicorp/terraform:null` which **fails silently**.
+
+| Field | Result |
+|-------|--------|
+| `terraformVersion: "1.6"` | ❌ `hashicorp/terraform:null` (FAILS) |
+| `tag: "1.6"` | ✅ `hashicorp/terraform:1.6` (WORKS) |
+
+### Complete Working Configuration
 ```json
 {
+  "_id": "695220000000000000000001",
+  "name": "Terraform EKS Deploy",
+  "active": true,
+  "orchestration_type": "standard",
+  "dependencies": [],
+  "tool": {
+    "tool_identifier": "terraform",
+    "configuration": {
+      "toolActionType": "EXECUTE",
+      "cloudProvider": "aws",
+      "backendState": "S3",
+      "stateRemote": true,
+      "bucketName": "my-state-bucket",
+      "stateFileName": "project/terraform.tfstate",
+      "bucketRegion": "us-east-1",
+      "tag": "1.6",
+      "autoApprove": true,
+      "type": "github",
+      "service": "github",
+      "gitToolId": "GITHUB_TOOL_ID_FROM_REGISTRY",
+      "repoId": "org/repo",
+      "repository": "repo",
+      "projectId": "org/repo",
+      "gitRepository": "repo",
+      "gitRepositoryID": "org/repo",
+      "gitUrl": "https://github.com/org/repo",
+      "sshUrl": "git@github.com:org/repo.git",
+      "gitFilePath": "terraform/aws",
+      "branch": "main",
+      "gitBranch": "main",
+      "defaultBranch": "main",
+      "awsToolConfigId": "AWS_TOOL_ID_FROM_REGISTRY",
+      "resourceProfile": "MEDIUM"
+    },
+    "job": {
+      "agentLabels": "generic-linux",
+      "autoScaleEnable": true
+    }
+  },
+  "type": ["infrastructure-code"]
+}
+```
+
+### Required: job Object
+The `job` object MUST be inside `tool` (NOT inside `configuration`):
+```json
+"tool": {
   "tool_identifier": "terraform",
-  "configuration": {
-    "tag": "1.6.0",
-    "stateFile": "manual",
-    "terraformAction": "EXECUTE",
-    "job": null,
-    "threshold": {"type": "", "value": ""}
+  "configuration": { ... },
+  "job": {
+    "agentLabels": "generic-linux",
+    "autoScaleEnable": true
   }
 }
 ```
@@ -121,4 +170,5 @@ POST /api/v2/actions
   "target": ["pipeline-id-1", "pipeline-id-2"]
 }
 ```
+
 
