@@ -103,8 +103,8 @@ if ! command -v terraform &>/dev/null; then
   
   echo '>>> Installing Terraform...'
   wget -q https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
-  unzip -q terraform_1.6.0_linux_amd64.zip
-  mv terraform /usr/local/bin/
+  unzip -o -q terraform_1.6.0_linux_amd64.zip
+  mv -f terraform /usr/local/bin/
   rm -f terraform_1.6.0_linux_amd64.zip
 fi
 
