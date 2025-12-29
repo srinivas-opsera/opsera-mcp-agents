@@ -76,3 +76,4 @@ metadata:
     # Will be updated with actual role ARN after terraform apply
     eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/opsera-mcp-dev-app-workload-role"
 
+

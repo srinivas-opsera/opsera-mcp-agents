@@ -101,3 +101,4 @@ The IAM role includes permissions for:
 - Credentials are automatically rotated by EKS
 - No long-lived access keys are stored
 
+

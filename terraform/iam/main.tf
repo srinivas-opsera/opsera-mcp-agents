@@ -215,3 +215,4 @@ resource "aws_iam_instance_profile" "terraform_profile" {
   role  = aws_iam_role.ec2_terraform_role[0].name
 }
 
+
