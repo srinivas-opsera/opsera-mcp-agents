@@ -76,3 +76,7 @@ metadata:
     eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/opsera-mcp-dev-app-workload-role"
 
 
+
+
+
+

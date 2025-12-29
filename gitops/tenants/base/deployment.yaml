@@ -66,3 +66,7 @@ metadata:
     # IRSA annotation will be added per-app
     eks.amazonaws.com/role-arn: ""
 
+
+
+
+

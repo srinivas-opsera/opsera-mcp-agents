@@ -283,3 +283,7 @@ done
 5. **Audit Trail**: All changes tracked in Git
 6. **Scalable**: Add new tenants/apps by adding YAML files
 
+
+
+
+

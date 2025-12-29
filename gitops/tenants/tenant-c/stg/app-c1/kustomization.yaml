@@ -39,3 +39,7 @@ configMapGenerator:
       - TENANT=tenant-c
       - APP_NAME=app-c1
 
+
+
+
+
