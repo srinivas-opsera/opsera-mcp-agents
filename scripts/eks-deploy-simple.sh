@@ -117,6 +117,67 @@ terraform init -input=false -reconfigure
 echo ''
 
 # -----------------------------------------------------------------------------
+# Import Existing Resources (idempotent)
+# -----------------------------------------------------------------------------
+echo '>>> Importing existing resources into Terraform state...'
+
+# Function to safely import a resource
+import_if_exists() {
+    local resource_type="$1"
+    local resource_name="$2"
+    local import_id="$3"
+    local check_cmd="$4"
+    
+    # Check if already in state
+    if terraform state show "${resource_type}.${resource_name}" &>/dev/null; then
+        echo "  [SKIP] ${resource_type}.${resource_name} already in state"
+        return 0
+    fi
+    
+    # Check if exists in AWS
+    if eval "${check_cmd}" &>/dev/null; then
+        echo "  [IMPORT] ${resource_type}.${resource_name} <- ${import_id}"
+        terraform import -input=false "${resource_type}.${resource_name}" "${import_id}" || true
+    else
+        echo "  [NEW] ${resource_type}.${resource_name} will be created"
+    fi
+}
+
+# Get AWS Account ID
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+echo "  AWS Account: ${AWS_ACCOUNT_ID}"
+
+# Import IAM Roles
+import_if_exists "aws_iam_role" "eks_cluster" "${CLUSTER_NAME}-eks-cluster-role" \
+    "aws iam get-role --role-name ${CLUSTER_NAME}-eks-cluster-role"
+
+import_if_exists "aws_iam_role" "eks_nodes" "${CLUSTER_NAME}-eks-node-role" \
+    "aws iam get-role --role-name ${CLUSTER_NAME}-eks-node-role"
+
+import_if_exists "aws_iam_role" "argocd" "${CLUSTER_NAME}-argocd-role" \
+    "aws iam get-role --role-name ${CLUSTER_NAME}-argocd-role"
+
+import_if_exists "aws_iam_role" "app_workload" "${CLUSTER_NAME}-app-workload-role" \
+    "aws iam get-role --role-name ${CLUSTER_NAME}-app-workload-role"
+
+# Import ECR Repository
+import_if_exists "aws_ecr_repository" "main" "opsera-mcp-agents" \
+    "aws ecr describe-repositories --repository-names opsera-mcp-agents"
+
+# Import VPC if exists
+VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${CLUSTER_NAME}-vpc" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "None")
+if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+    import_if_exists "aws_vpc" "main" "${VPC_ID}" "echo exists"
+fi
+
+# Import EKS Cluster if exists
+if [ "${CLUSTER_STATUS}" == "ACTIVE" ]; then
+    import_if_exists "aws_eks_cluster" "main" "${CLUSTER_NAME}" "echo exists"
+fi
+
+echo ''
+
+# -----------------------------------------------------------------------------
 # Plan
 # -----------------------------------------------------------------------------
 echo '>>> Running Terraform plan...'
