@@ -1,0 +1,62 @@
+# =============================================================================
+# Example terraform.tfvars for IAM Role Configuration
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your values
+# =============================================================================
+
+aws_region   = "us-east-1"
+project_name = "opsera-mcp-agents"
+
+# -----------------------------------------------------------------------------
+# EKS OIDC Configuration
+# -----------------------------------------------------------------------------
+# You need to get these values from your EKS cluster:
+#
+# aws eks describe-cluster --name <cluster-name> --query "cluster.identity.oidc.issuer"
+#
+# The OIDC issuer will look like:
+# https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE
+#
+# The provider ARN will be:
+# arn:aws:iam::<account-id>:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE
+# -----------------------------------------------------------------------------
+
+eks_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+eks_oidc_issuer       = "oidc.eks.us-east-1.amazonaws.com/id/EXAMPLED539D4633E53DE1B71EXAMPLE"
+
+# -----------------------------------------------------------------------------
+# Kubernetes Configuration
+# -----------------------------------------------------------------------------
+# Check what namespace and service account Opsera uses for jobs:
+#
+# kubectl get pods -A | grep opsera
+# kubectl get sa -n opsera
+# -----------------------------------------------------------------------------
+
+kubernetes_namespace       = "opsera"
+kubernetes_service_account = "*"  # or specific SA name
+
+# -----------------------------------------------------------------------------
+# S3 Bucket for Terraform State
+# -----------------------------------------------------------------------------
+
+terraform_state_bucket = "Opsera-agentic-s3-v1"
+
+# -----------------------------------------------------------------------------
+# Optional: Create EC2 Instance Profile
+# -----------------------------------------------------------------------------
+
+create_ec2_role = false
+
+# -----------------------------------------------------------------------------
+# Tags
+# -----------------------------------------------------------------------------
+
+tags = {
+  Project     = "opsera-mcp-agents"
+  Environment = "dev"
+  ManagedBy   = "terraform"
+  Purpose     = "pipeline-iam"
+  Owner       = "srinivas@opsera.us"
+}
+
