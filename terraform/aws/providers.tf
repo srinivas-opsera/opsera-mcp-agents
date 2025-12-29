@@ -1,14 +1,18 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Opsera MCP Agents - AWS Provider Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# Terraform and Provider Configuration
+# =============================================================================
 
 terraform {
-  required_version = ">= 1.0.0"
+  required_version = ">= 1.0"
 
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
     }
   }
 }
@@ -18,11 +22,9 @@ provider "aws" {
 
   default_tags {
     tags = {
-      Project     = "opsera-mcp-agents"
+      Project     = var.project_name
       Environment = var.environment
-      ManagedBy   = "Terraform"
-      Owner       = "opsera"
+      ManagedBy   = "terraform"
     }
   }
 }
-

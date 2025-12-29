@@ -1,0 +1,29 @@
+# =============================================================================
+# ArgoCD App of Apps
+# =============================================================================
+# This is the root application that manages all other applications.
+# Deploy this first, then it will sync all tenant applications.
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-apps
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/srinivas-opsera/opsera-mcp-agents.git
+    targetRevision: main
+    path: gitops/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+

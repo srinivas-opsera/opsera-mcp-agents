@@ -1,10 +1,10 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Opsera MCP Agents - Terraform Variables
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# Variables for EKS Multi-Tenant Platform
+# =============================================================================
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# General Configuration
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# General
+# -----------------------------------------------------------------------------
 
 variable "aws_region" {
   description = "AWS region for resources"
@@ -26,12 +26,12 @@ variable "environment" {
 variable "project_name" {
   description = "Project name for resource naming"
   type        = string
-  default     = "opsera-mcp-agents"
+  default     = "opsera-mcp"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# Networking Configuration
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# VPC Configuration
+# -----------------------------------------------------------------------------
 
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
@@ -57,43 +57,55 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.10.0/24", "10.0.20.0/24"]
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# ECS Configuration
-# ─────────────────────────────────────────────────────────────────────────────────
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway for private subnets"
+  type        = bool
+  default     = true
+}
 
-variable "ecs_cluster_name" {
-  description = "Name of the ECS cluster"
+# -----------------------------------------------------------------------------
+# EKS Configuration
+# -----------------------------------------------------------------------------
+
+variable "kubernetes_version" {
+  description = "Kubernetes version for EKS cluster"
   type        = string
-  default     = "opsera-mcp-cluster"
+  default     = "1.28"
 }
 
-variable "container_port" {
-  description = "Port exposed by the container"
+variable "node_instance_types" {
+  description = "Instance types for EKS node group"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "node_capacity_type" {
+  description = "Capacity type for nodes (ON_DEMAND or SPOT)"
+  type        = string
+  default     = "ON_DEMAND"
+}
+
+variable "node_desired_size" {
+  description = "Desired number of nodes"
   type        = number
-  default     = 3847
+  default     = 2
 }
 
-variable "container_cpu" {
-  description = "CPU units for the container (1024 = 1 vCPU)"
-  type        = number
-  default     = 256
-}
-
-variable "container_memory" {
-  description = "Memory for the container in MB"
-  type        = number
-  default     = 512
-}
-
-variable "desired_count" {
-  description = "Desired number of tasks"
+variable "node_min_size" {
+  description = "Minimum number of nodes"
   type        = number
   default     = 1
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
+variable "node_max_size" {
+  description = "Maximum number of nodes"
+  type        = number
+  default     = 4
+}
+
+# -----------------------------------------------------------------------------
 # ECR Configuration
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 variable "ecr_repository_name" {
   description = "Name of the ECR repository"
@@ -101,19 +113,12 @@ variable "ecr_repository_name" {
   default     = "opsera-mcp-agents"
 }
 
-variable "image_tag" {
-  description = "Docker image tag to deploy"
-  type        = string
-  default     = "latest"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Tags
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 variable "additional_tags" {
   description = "Additional tags to apply to resources"
   type        = map(string)
   default     = {}
 }
-

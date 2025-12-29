@@ -1,16 +1,30 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Opsera MCP Agents - Terraform Backend Configuration  
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# Terraform Backend Configuration
+# =============================================================================
 # 
-# Using local backend for testing - switch to S3 after validation
-# ═══════════════════════════════════════════════════════════════════════════════
+# For initial deployment, we use local backend.
+# After S3 bucket is created, switch to S3 backend for team collaboration.
+#
+# To migrate to S3 backend:
+# 1. Uncomment the S3 backend block below
+# 2. Comment out the local backend block
+# 3. Run: terraform init -migrate-state
+# =============================================================================
 
-# Temporarily disabled S3 backend for debugging
+# Local backend (for initial deployment)
+terraform {
+  backend "local" {
+    path = "terraform.tfstate"
+  }
+}
+
+# S3 backend (uncomment after initial deployment)
 # terraform {
 #   backend "s3" {
-#     bucket  = "Opsera-agentic-s3-v1"
-#     key     = "opsera-mcp-agents/terraform.tfstate"
-#     region  = "us-east-1"
-#     encrypt = true
+#     bucket         = "opsera-mcp-terraform-state"
+#     key            = "eks/terraform.tfstate"
+#     region         = "us-east-1"
+#     encrypt        = true
+#     dynamodb_table = "terraform-state-lock"
 #   }
 # }

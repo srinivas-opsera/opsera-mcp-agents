@@ -1,29 +1,32 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# Opsera MCP Agents - Main Infrastructure Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
-#
-#     .  ,
-#     |\/|
-#     bd "  O P S E R A
-#          ─────────────────
-#          @opsera | MCP Agents Infrastructure
-#
-# ═══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+# EKS Multi-Tenant Platform Infrastructure
+# =============================================================================
+# Creates:
+# - VPC with public/private subnets
+# - EKS cluster with OIDC provider (for IRSA)
+# - Managed node groups
+# - ECR repository
+# - IAM roles for EKS and service accounts
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Local Variables
+# -----------------------------------------------------------------------------
 
 locals {
-  name_prefix = "${var.project_name}-${var.environment}"
+  cluster_name = "${var.project_name}-${var.environment}"
   
   common_tags = merge(var.additional_tags, {
     Project     = var.project_name
     Environment = var.environment
-    ManagedBy   = "Terraform"
-    Owner       = "opsera"
+    ManagedBy   = "terraform"
+    Platform    = "eks-gitops"
   })
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# VPC Configuration
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# VPC
+# -----------------------------------------------------------------------------
 
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
@@ -31,7 +34,8 @@ resource "aws_vpc" "main" {
   enable_dns_support   = true
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-vpc"
+    Name = "${local.cluster_name}-vpc"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
   })
 }
 
@@ -40,38 +44,65 @@ resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-igw"
+    Name = "${local.cluster_name}-igw"
   })
 }
 
 # Public Subnets
 resource "aws_subnet" "public" {
-  count                   = length(var.public_subnet_cidrs)
+  count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidrs[count.index]
   availability_zone       = var.availability_zones[count.index]
   map_public_ip_on_launch = true
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-public-${count.index + 1}"
-    Type = "public"
+    Name = "${local.cluster_name}-public-${var.availability_zones[count.index]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/elb" = "1"
   })
 }
 
 # Private Subnets
 resource "aws_subnet" "private" {
-  count             = length(var.private_subnet_cidrs)
+  count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidrs[count.index]
   availability_zone = var.availability_zones[count.index]
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-private-${count.index + 1}"
-    Type = "private"
+    Name = "${local.cluster_name}-private-${var.availability_zones[count.index]}"
+    "kubernetes.io/cluster/${local.cluster_name}" = "shared"
+    "kubernetes.io/role/internal-elb" = "1"
   })
 }
 
-# Route Table for Public Subnets
+# Elastic IP for NAT Gateway
+resource "aws_eip" "nat" {
+  count  = var.enable_nat_gateway ? 1 : 0
+  domain = "vpc"
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-nat-eip"
+  })
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+# NAT Gateway
+resource "aws_nat_gateway" "main" {
+  count         = var.enable_nat_gateway ? 1 : 0
+  allocation_id = aws_eip.nat[0].id
+  subnet_id     = aws_subnet.public[0].id
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-nat"
+  })
+
+  depends_on = [aws_internet_gateway.main]
+}
+
+# Public Route Table
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -81,45 +112,104 @@ resource "aws_route_table" "public" {
   }
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-public-rt"
+    Name = "${local.cluster_name}-public-rt"
   })
 }
 
-# Route Table Association for Public Subnets
+# Private Route Table
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  dynamic "route" {
+    for_each = var.enable_nat_gateway ? [1] : []
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.main[0].id
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${local.cluster_name}-private-rt"
+  })
+}
+
+# Route Table Associations
 resource "aws_route_table_association" "public" {
-  count          = length(aws_subnet.public)
+  count          = length(var.availability_zones)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# Security Groups
-# ─────────────────────────────────────────────────────────────────────────────────
+resource "aws_route_table_association" "private" {
+  count          = length(var.availability_zones)
+  subnet_id      = aws_subnet.private[count.index].id
+  route_table_id = aws_route_table.private.id
+}
 
-# ALB Security Group
-resource "aws_security_group" "alb" {
-  name        = "${local.name_prefix}-alb-sg"
-  description = "Security group for Application Load Balancer"
+# -----------------------------------------------------------------------------
+# EKS Cluster IAM Role
+# -----------------------------------------------------------------------------
+
+resource "aws_iam_role" "eks_cluster" {
+  name = "${local.cluster_name}-eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_vpc_resource_controller" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSVPCResourceController"
+  role       = aws_iam_role.eks_cluster.name
+}
+
+# -----------------------------------------------------------------------------
+# EKS Cluster
+# -----------------------------------------------------------------------------
+
+resource "aws_eks_cluster" "main" {
+  name     = local.cluster_name
+  role_arn = aws_iam_role.eks_cluster.arn
+  version  = var.kubernetes_version
+
+  vpc_config {
+    subnet_ids              = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
+    endpoint_private_access = true
+    endpoint_public_access  = true
+    security_group_ids      = [aws_security_group.eks_cluster.id]
+  }
+
+  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+
+  tags = local.common_tags
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy,
+    aws_iam_role_policy_attachment.eks_vpc_resource_controller,
+  ]
+}
+
+# EKS Cluster Security Group
+resource "aws_security_group" "eks_cluster" {
+  name        = "${local.cluster_name}-eks-cluster-sg"
+  description = "Security group for EKS cluster"
   vpc_id      = aws_vpc.main.id
 
-  ingress {
-    description = "HTTP from anywhere"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    description = "HTTPS from anywhere"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
-    description = "Allow all outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -127,40 +217,102 @@ resource "aws_security_group" "alb" {
   }
 
   tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-alb-sg"
+    Name = "${local.cluster_name}-eks-cluster-sg"
   })
 }
 
-# ECS Tasks Security Group
-resource "aws_security_group" "ecs_tasks" {
-  name        = "${local.name_prefix}-ecs-tasks-sg"
-  description = "Security group for ECS tasks"
-  vpc_id      = aws_vpc.main.id
+# -----------------------------------------------------------------------------
+# EKS Node Group IAM Role
+# -----------------------------------------------------------------------------
 
-  ingress {
-    description     = "Allow traffic from ALB"
-    from_port       = var.container_port
-    to_port         = var.container_port
-    protocol        = "tcp"
-    security_groups = [aws_security_group.alb.id]
-  }
+resource "aws_iam_role" "eks_nodes" {
+  name = "${local.cluster_name}-eks-node-role"
 
-  egress {
-    description = "Allow all outbound traffic"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-ecs-tasks-sg"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
   })
+
+  tags = local.common_tags
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
+resource "aws_iam_role_policy_attachment" "eks_worker_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "eks_container_registry" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+# -----------------------------------------------------------------------------
+# EKS Node Group
+# -----------------------------------------------------------------------------
+
+resource "aws_eks_node_group" "main" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "${local.cluster_name}-node-group"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = aws_subnet.private[*].id
+
+  instance_types = var.node_instance_types
+  capacity_type  = var.node_capacity_type
+
+  scaling_config {
+    desired_size = var.node_desired_size
+    max_size     = var.node_max_size
+    min_size     = var.node_min_size
+  }
+
+  update_config {
+    max_unavailable = 1
+  }
+
+  labels = {
+    Environment = var.environment
+    Project     = var.project_name
+  }
+
+  tags = local.common_tags
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_worker_node_policy,
+    aws_iam_role_policy_attachment.eks_cni_policy,
+    aws_iam_role_policy_attachment.eks_container_registry,
+  ]
+}
+
+# -----------------------------------------------------------------------------
+# OIDC Provider for IRSA (IAM Roles for Service Accounts)
+# -----------------------------------------------------------------------------
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
+
+  tags = local.common_tags
+}
+
+# -----------------------------------------------------------------------------
 # ECR Repository
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 resource "aws_ecr_repository" "main" {
   name                 = var.ecr_repository_name
@@ -174,258 +326,101 @@ resource "aws_ecr_repository" "main" {
     encryption_type = "AES256"
   }
 
-  tags = merge(local.common_tags, {
-    Name = var.ecr_repository_name
-  })
+  tags = local.common_tags
 }
 
-# ECR Lifecycle Policy
 resource "aws_ecr_lifecycle_policy" "main" {
   repository = aws_ecr_repository.main.name
 
   policy = jsonencode({
-    rules = [
-      {
-        rulePriority = 1
-        description  = "Keep last 10 images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 10
-        }
-        action = {
-          type = "expire"
-        }
+    rules = [{
+      rulePriority = 1
+      description  = "Keep last 30 images"
+      selection = {
+        tagStatus     = "tagged"
+        tagPrefixList = ["v"]
+        countType     = "imageCountMoreThan"
+        countNumber   = 30
       }
-    ]
+      action = {
+        type = "expire"
+      }
+    }]
   })
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# ECS Cluster
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# IAM Role for ArgoCD (IRSA)
+# -----------------------------------------------------------------------------
 
-resource "aws_ecs_cluster" "main" {
-  name = var.ecs_cluster_name
-
-  setting {
-    name  = "containerInsights"
-    value = "enabled"
-  }
-
-  tags = merge(local.common_tags, {
-    Name = var.ecs_cluster_name
-  })
-}
-
-resource "aws_ecs_cluster_capacity_providers" "main" {
-  cluster_name = aws_ecs_cluster.main.name
-
-  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
-
-  default_capacity_provider_strategy {
-    base              = 1
-    weight            = 100
-    capacity_provider = "FARGATE"
-  }
-}
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# IAM Roles for ECS
-# ─────────────────────────────────────────────────────────────────────────────────
-
-# ECS Task Execution Role
-resource "aws_iam_role" "ecs_task_execution" {
-  name = "${local.name_prefix}-ecs-execution-role"
+resource "aws_iam_role" "argocd" {
+  name = "${local.cluster_name}-argocd-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:argocd:argocd-server"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
         }
       }
-    ]
+    }]
   })
 
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy_attachment" "ecs_task_execution" {
-  role       = aws_iam_role.ecs_task_execution.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-}
+# ArgoCD ECR access policy
+resource "aws_iam_role_policy" "argocd_ecr" {
+  name = "${local.cluster_name}-argocd-ecr-policy"
+  role = aws_iam_role.argocd.id
 
-# ECS Task Role
-resource "aws_iam_role" "ecs_task" {
-  name = "${local.name_prefix}-ecs-task-role"
-
-  assume_role_policy = jsonencode({
+  policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole"
         Effect = "Allow"
-        Principal = {
-          Service = "ecs-tasks.amazonaws.com"
-        }
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
       }
     ]
   })
-
-  tags = local.common_tags
 }
 
-# ─────────────────────────────────────────────────────────────────────────────────
-# CloudWatch Log Group
-# ─────────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# IAM Role for Application Workloads (IRSA)
+# -----------------------------------------------------------------------------
 
-resource "aws_cloudwatch_log_group" "ecs" {
-  name              = "/ecs/${local.name_prefix}"
-  retention_in_days = 30
+resource "aws_iam_role" "app_workload" {
+  name = "${local.cluster_name}-app-workload-role"
 
-  tags = local.common_tags
-}
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# Application Load Balancer
-# ─────────────────────────────────────────────────────────────────────────────────
-
-resource "aws_lb" "main" {
-  name               = "${local.name_prefix}-alb"
-  internal           = false
-  load_balancer_type = "application"
-  security_groups    = [aws_security_group.alb.id]
-  subnets            = aws_subnet.public[*].id
-
-  enable_deletion_protection = var.environment == "prod" ? true : false
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-alb"
-  })
-}
-
-resource "aws_lb_target_group" "main" {
-  name        = "${local.name_prefix}-tg"
-  port        = var.container_port
-  protocol    = "HTTP"
-  vpc_id      = aws_vpc.main.id
-  target_type = "ip"
-
-  health_check {
-    enabled             = true
-    healthy_threshold   = 2
-    interval            = 30
-    matcher             = "200"
-    path                = "/health"
-    port                = "traffic-port"
-    protocol            = "HTTP"
-    timeout             = 5
-    unhealthy_threshold = 3
-  }
-
-  tags = merge(local.common_tags, {
-    Name = "${local.name_prefix}-tg"
-  })
-}
-
-resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.main.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.main.arn
-  }
-
-  tags = local.common_tags
-}
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# ECS Task Definition
-# ─────────────────────────────────────────────────────────────────────────────────
-
-resource "aws_ecs_task_definition" "main" {
-  family                   = "${local.name_prefix}-task"
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
-  cpu                      = var.container_cpu
-  memory                   = var.container_memory
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task.arn
-
-  container_definitions = jsonencode([
-    {
-      name  = "${local.name_prefix}-container"
-      image = "${aws_ecr_repository.main.repository_url}:${var.image_tag}"
-      
-      portMappings = [
-        {
-          containerPort = var.container_port
-          hostPort      = var.container_port
-          protocol      = "tcp"
-        }
-      ]
-
-      environment = [
-        {
-          name  = "NODE_ENV"
-          value = var.environment
-        },
-        {
-          name  = "PORT"
-          value = tostring(var.container_port)
-        }
-      ]
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs.name
-          "awslogs-region"        = var.aws_region
-          "awslogs-stream-prefix" = "ecs"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringLike = {
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:sub" = "system:serviceaccount:*:*"
+          "${replace(aws_iam_openid_connect_provider.eks.url, "https://", "")}:aud" = "sts.amazonaws.com"
         }
       }
-
-      essential = true
-    }
-  ])
+    }]
+  })
 
   tags = local.common_tags
 }
-
-# ─────────────────────────────────────────────────────────────────────────────────
-# ECS Service
-# ─────────────────────────────────────────────────────────────────────────────────
-
-resource "aws_ecs_service" "main" {
-  name            = "${local.name_prefix}-service"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.main.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
-  }
-
-  load_balancer {
-    target_group_arn = aws_lb_target_group.main.arn
-    container_name   = "${local.name_prefix}-container"
-    container_port   = var.container_port
-  }
-
-  depends_on = [
-    aws_lb_listener.http,
-    aws_iam_role_policy_attachment.ecs_task_execution
-  ]
-
-  tags = local.common_tags
-}
-

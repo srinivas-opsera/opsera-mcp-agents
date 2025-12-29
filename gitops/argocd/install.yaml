@@ -1,0 +1,31 @@
+# =============================================================================
+# ArgoCD Installation
+# =============================================================================
+# 
+# This file contains instructions for installing ArgoCD.
+# Run these commands after EKS cluster is created.
+# =============================================================================
+
+# Installation commands (run in order):
+#
+# 1. Create ArgoCD namespace:
+#    kubectl create namespace argocd
+#
+# 2. Install ArgoCD:
+#    kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+#
+# 3. Wait for pods to be ready:
+#    kubectl wait --for=condition=Ready pods --all -n argocd --timeout=300s
+#
+# 4. Get initial admin password:
+#    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+#
+# 5. Port forward to access UI:
+#    kubectl port-forward svc/argocd-server -n argocd 8080:443
+#
+# 6. Login via CLI:
+#    argocd login localhost:8080 --username admin --password <password> --insecure
+#
+# 7. Change admin password:
+#    argocd account update-password
+

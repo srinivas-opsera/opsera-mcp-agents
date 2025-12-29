@@ -1,0 +1,78 @@
+# =============================================================================
+# Tenant A - Dev Environment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opsera-mcp-agent
+  labels:
+    app: opsera-mcp-agent
+    tenant: tenant-a
+    environment: dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opsera-mcp-agent
+  template:
+    metadata:
+      labels:
+        app: opsera-mcp-agent
+        tenant: tenant-a
+        environment: dev
+    spec:
+      serviceAccountName: opsera-mcp-agent
+      containers:
+        - name: opsera-mcp-agent
+          # Update with your ECR repository URL after deployment
+          image: nginx:alpine  # Placeholder - replace with actual image
+          ports:
+            - containerPort: 3847
+          env:
+            - name: NODE_ENV
+              value: "development"
+            - name: PORT
+              value: "3847"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3847
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3847
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opsera-mcp-agent
+  labels:
+    app: opsera-mcp-agent
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 3847
+      protocol: TCP
+  selector:
+    app: opsera-mcp-agent
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opsera-mcp-agent
+  annotations:
+    # Will be updated with actual role ARN after terraform apply
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/opsera-mcp-dev-app-workload-role"
+
