@@ -1,30 +1,15 @@
 # =============================================================================
 # Terraform Backend Configuration
 # =============================================================================
-# 
-# For initial deployment, we use local backend.
-# After S3 bucket is created, switch to S3 backend for team collaboration.
-#
-# To migrate to S3 backend:
-# 1. Uncomment the S3 backend block below
-# 2. Comment out the local backend block
-# 3. Run: terraform init -migrate-state
+# Using S3 backend for state persistence across pipeline runs.
+# The bucket was created during initial deployment.
 # =============================================================================
 
-# Local backend (for initial deployment)
 terraform {
-  backend "local" {
-    path = "terraform.tfstate"
+  backend "s3" {
+    bucket  = "opsera-agentic-s3-v1"
+    key     = "opsera-mcp-agents/eks-terraform.tfstate"
+    region  = "us-east-1"
+    encrypt = true
   }
 }
-
-# S3 backend (uncomment after initial deployment)
-# terraform {
-#   backend "s3" {
-#     bucket         = "opsera-mcp-terraform-state"
-#     key            = "eks/terraform.tfstate"
-#     region         = "us-east-1"
-#     encrypt        = true
-#     dynamodb_table = "terraform-state-lock"
-#   }
-# }
