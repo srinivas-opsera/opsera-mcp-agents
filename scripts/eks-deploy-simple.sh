@@ -35,10 +35,12 @@ if ! command -v terraform &>/dev/null; then
     echo '>>> Installing Terraform 1.6.0...'
     apt-get update -qq
     apt-get install -y -qq wget unzip git curl jq
+    cd /tmp
     wget -q https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
     unzip -o -q terraform_1.6.0_linux_amd64.zip
     mv -f terraform /usr/local/bin/
     rm -f terraform_1.6.0_linux_amd64.zip
+    cd -
 fi
 
 # Install AWS CLI if not present  
