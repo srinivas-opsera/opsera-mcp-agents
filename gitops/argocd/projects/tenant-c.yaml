@@ -1,0 +1,43 @@
+# ArgoCD AppProject for Tenant C
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-c
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Tenant C - Multi-environment project"
+  
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+    - "https://github.com/srinivas-opsera/*"
+  
+  destinations:
+    - namespace: tenant-c-dev
+      server: https://kubernetes.default.svc
+    - namespace: tenant-c-stg
+      server: https://kubernetes.default.svc
+    - namespace: tenant-c-prod
+      server: https://kubernetes.default.svc
+  
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: networking.k8s.io
+      kind: Ingress
+  
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  
+  orphanedResources:
+    warn: true
+  
+  roles:
+    - name: admin
+      policies:
+        - p, proj:tenant-c:admin, applications, *, tenant-c/*, allow
+      groups:
+        - tenant-c-admins
+

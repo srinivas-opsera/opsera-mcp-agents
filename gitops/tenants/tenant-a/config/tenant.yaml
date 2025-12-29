@@ -1,0 +1,67 @@
+# Tenant A Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenant-a-config
+  namespace: tenant-a-dev
+  labels:
+    opsera.io/tenant: tenant-a
+data:
+  tenant_id: "tenant-a"
+  tenant_name: "Tenant A"
+  apps: "app1,app2,app3"
+  environments: "dev,stg,prod"
+  domain_suffix: "agent.opsera.io"
+---
+# Tenant Resource Quota
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: tenant-a-quota
+  namespace: tenant-a-dev
+  labels:
+    opsera.io/tenant: tenant-a
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    pods: "20"
+    services: "10"
+---
+# Tenant Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tenant-a-isolation
+  namespace: tenant-a-dev
+  labels:
+    opsera.io/tenant: tenant-a
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              opsera.io/tenant: tenant-a
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              opsera.io/tenant: tenant-a
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+

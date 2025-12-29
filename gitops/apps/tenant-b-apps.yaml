@@ -1,0 +1,56 @@
+# Tenant B - Application Set
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-b-apps
+  namespace: argocd
+spec:
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - app: app-b1
+                  endpoints:
+                    - AppB1-dev.agent.opsera.io
+                    - AppB1-stg.agent.opsera.io
+                    - AppB1.agent.opsera.io
+                - app: app-b2
+                  endpoints:
+                    - AppB2-dev.agent.opsera.io
+                    - AppB2-stg.agent.opsera.io
+                    - AppB2.agent.opsera.io
+          - list:
+              elements:
+                - env: dev
+                  namespace: tenant-b-dev
+                - env: stg
+                  namespace: tenant-b-stg
+  
+  template:
+    metadata:
+      name: 'tenant-b-{{app}}-{{env}}'
+      namespace: argocd
+      labels:
+        tenant: tenant-b
+        app: '{{app}}'
+        environment: '{{env}}'
+    spec:
+      project: tenant-b
+      
+      source:
+        repoURL: https://github.com/srinivas-opsera/opsera-mcp-agents.git
+        targetRevision: main
+        path: 'gitops/tenants/tenant-b/{{env}}/{{app}}'
+        
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+

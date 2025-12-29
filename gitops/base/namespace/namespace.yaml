@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: placeholder
+  labels:
+    app.kubernetes.io/managed-by: argocd
+    opsera.io/tenant: placeholder
+    opsera.io/environment: placeholder
+

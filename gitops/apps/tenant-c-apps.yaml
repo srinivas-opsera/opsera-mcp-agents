@@ -1,0 +1,51 @@
+# Tenant C - Application Set
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-c-apps
+  namespace: argocd
+spec:
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - app: app-c1
+                  endpoints:
+                    - AppC1-dev.agent.opsera.io
+                    - AppC1-stg.agent.opsera.io
+                    - AppC1.agent.opsera.io
+          - list:
+              elements:
+                - env: dev
+                  namespace: tenant-c-dev
+                - env: stg
+                  namespace: tenant-c-stg
+  
+  template:
+    metadata:
+      name: 'tenant-c-{{app}}-{{env}}'
+      namespace: argocd
+      labels:
+        tenant: tenant-c
+        app: '{{app}}'
+        environment: '{{env}}'
+    spec:
+      project: tenant-c
+      
+      source:
+        repoURL: https://github.com/srinivas-opsera/opsera-mcp-agents.git
+        targetRevision: main
+        path: 'gitops/tenants/tenant-c/{{env}}/{{app}}'
+        
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{namespace}}'
+      
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+

@@ -1,0 +1,71 @@
+# =============================================================================
+# ApplicationSet for Multi-Tenant App Deployment
+# Automatically creates ArgoCD Applications for each tenant/app/environment
+# =============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenant-apps
+  namespace: argocd
+spec:
+  generators:
+    # Matrix generator: combines tenants x apps x environments
+    - matrix:
+        generators:
+          # Tenant list
+          - list:
+              elements:
+                - tenant: tenant-a
+                  tenantShort: a
+                - tenant: tenant-b
+                  tenantShort: b
+                - tenant: tenant-c
+                  tenantShort: c
+          # Apps and environments
+          - matrix:
+              generators:
+                - list:
+                    elements:
+                      - app: app1
+                        appShort: "1"
+                      - app: app2
+                        appShort: "2"
+                      - app: app3
+                        appShort: "3"
+                - list:
+                    elements:
+                      - env: dev
+                        cluster: https://kubernetes.default.svc
+                      - env: stg
+                        cluster: https://kubernetes.default.svc
+  template:
+    metadata:
+      name: "{{tenant}}-{{app}}-{{env}}"
+      namespace: argocd
+      labels:
+        tenant: "{{tenant}}"
+        app: "{{app}}"
+        environment: "{{env}}"
+    spec:
+      project: "{{tenant}}"
+      source:
+        repoURL: https://github.com/srinivas-opsera/opsera-mcp-agents.git
+        targetRevision: main
+        path: "gitops/tenants/{{tenant}}/apps/{{app}}/overlays/{{env}}"
+      destination:
+        server: "{{cluster}}"
+        namespace: "{{tenant}}-{{env}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PruneLast=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+

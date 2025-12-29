@@ -1,0 +1,60 @@
+# ArgoCD AppProject for Tenant A
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-a
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Tenant A - Multi-environment project"
+  
+  # Source repositories
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+    - "https://github.com/srinivas-opsera/*"
+  
+  # Destination clusters and namespaces
+  destinations:
+    # Dev environment
+    - namespace: tenant-a-dev
+      server: https://kubernetes.default.svc
+    # Staging environment  
+    - namespace: tenant-a-stg
+      server: https://kubernetes.default.svc
+    # Production environments (future multi-cluster)
+    - namespace: tenant-a-prod
+      server: https://kubernetes.default.svc
+  
+  # Allowed cluster resources
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
+    - group: networking.k8s.io
+      kind: Ingress
+  
+  # Namespace resources  
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  
+  # Orphaned resources monitoring
+  orphanedResources:
+    warn: true
+  
+  # Roles within the project
+  roles:
+    - name: admin
+      description: "Full access to Tenant A project"
+      policies:
+        - p, proj:tenant-a:admin, applications, *, tenant-a/*, allow
+      groups:
+        - tenant-a-admins
+    - name: developer
+      description: "Read-only + sync access"
+      policies:
+        - p, proj:tenant-a:developer, applications, get, tenant-a/*, allow
+        - p, proj:tenant-a:developer, applications, sync, tenant-a/*, allow
+      groups:
+        - tenant-a-developers
+

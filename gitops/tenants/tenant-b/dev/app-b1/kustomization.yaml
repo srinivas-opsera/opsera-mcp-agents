@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: tenant-b-dev
+
+resources:
+  - ../../../base
+
+namePrefix: app-b1-
+
+commonLabels:
+  tenant: tenant-b
+  app: app-b1
+  environment: dev
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: AppB1-dev.agent.opsera.io
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: AppB1-dev.agent.opsera.io
+    target:
+      kind: Ingress
+      name: app
+
+configMapGenerator:
+  - name: app-config
+    literals:
+      - ENVIRONMENT=dev
+      - TENANT=tenant-b
+      - APP_NAME=app-b1
+

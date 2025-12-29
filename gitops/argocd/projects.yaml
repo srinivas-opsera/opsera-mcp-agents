@@ -1,0 +1,81 @@
+# =============================================================================
+# ArgoCD Projects for Multi-Tenant Isolation
+# Each tenant gets their own project with limited permissions
+# =============================================================================
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-a
+  namespace: argocd
+spec:
+  description: "Tenant A - Application deployments"
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+    - "https://github.com/srinivas-opsera/*"
+  destinations:
+    - namespace: "tenant-a-*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-b
+  namespace: argocd
+spec:
+  description: "Tenant B - Application deployments"
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+    - "https://github.com/srinivas-opsera/*"
+  destinations:
+    - namespace: "tenant-b-*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-c
+  namespace: argocd
+spec:
+  description: "Tenant C - Application deployments"
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+    - "https://github.com/srinivas-opsera/*"
+  destinations:
+    - namespace: "tenant-c-*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: "Platform - Infrastructure and shared services"
+  sourceRepos:
+    - "https://github.com/srinivas-opsera/opsera-mcp-agents.git"
+  destinations:
+    - namespace: "*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+

@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: tenant-a-stg
+
+resources:
+  - ../../base
+  - ingress.yaml
+
+commonLabels:
+  opsera.io/environment: stg
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+    target:
+      kind: Deployment
+      name: app1
+
+images:
+  - name: 792373136340.dkr.ecr.us-west-2.amazonaws.com/opsera-mcp-agents
+    newTag: stg-latest
+
