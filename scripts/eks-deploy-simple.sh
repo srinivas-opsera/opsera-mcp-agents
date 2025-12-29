@@ -80,6 +80,19 @@ ls -la
 echo ''
 
 # -----------------------------------------------------------------------------
+# Create S3 Bucket for State (if it doesn't exist)
+# -----------------------------------------------------------------------------
+echo '>>> Ensuring S3 bucket exists for state...'
+if ! aws s3 ls "s3://${S3_BUCKET}" 2>&1 | grep -q 'NoSuchBucket'; then
+    echo "  Bucket ${S3_BUCKET} exists"
+else
+    echo "  Creating bucket ${S3_BUCKET}..."
+    aws s3 mb "s3://${S3_BUCKET}" --region us-east-1
+    aws s3api put-bucket-versioning --bucket "${S3_BUCKET}" --versioning-configuration Status=Enabled
+fi
+echo ''
+
+# -----------------------------------------------------------------------------
 # Configure S3 Backend
 # -----------------------------------------------------------------------------
 echo '>>> Configuring S3 backend for state persistence...'
