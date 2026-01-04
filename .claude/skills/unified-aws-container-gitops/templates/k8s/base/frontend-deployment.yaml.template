@@ -1,0 +1,73 @@
+# Frontend Deployment Template (Nginx with verified fixes)
+# Replace: {{APP_NAME}}, {{FRONTEND_PORT}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{APP_NAME}}-frontend
+  labels:
+    app: {{APP_NAME}}-frontend
+    app.kubernetes.io/name: {{APP_NAME}}-frontend
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{APP_NAME}}-frontend
+  template:
+    metadata:
+      labels:
+        app: {{APP_NAME}}-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: {{APP_NAME}}-frontend:latest
+          ports:
+            - containerPort: {{FRONTEND_PORT}}
+              protocol: TCP
+
+          # CRITICAL: Nginx needs writable directories
+          # These volumes fix "Read-only file system" errors
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "25m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{FRONTEND_PORT}}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{FRONTEND_PORT}}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+      # CRITICAL: emptyDir volumes for nginx
+      # Required when using readOnlyRootFilesystem or restrictive security contexts
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

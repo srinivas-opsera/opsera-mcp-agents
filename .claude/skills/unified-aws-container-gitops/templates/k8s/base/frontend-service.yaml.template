@@ -1,0 +1,38 @@
+# Frontend Service Template with HTTPS via NLB annotations
+# Replace: {{APP_NAME}}, {{FRONTEND_PORT}}
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{APP_NAME}}-frontend
+  labels:
+    app: {{APP_NAME}}-frontend
+    app.kubernetes.io/name: {{APP_NAME}}-frontend
+  annotations:
+    # ExternalDNS: Creates Route53 A record automatically
+    external-dns.alpha.kubernetes.io/hostname: {{APP_NAME}}.agents.opsera-labs.com
+
+    # NLB Configuration
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+
+    # HTTPS/SSL Configuration (TLS termination at NLB)
+    service.beta.kubernetes.io/aws-load-balancer-ssl-cert: "arn:aws:acm:us-west-1:792373136340:certificate/817da31f-83bb-44f2-b8b8-ae4372cff9bd"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-ports: "443"
+    service.beta.kubernetes.io/aws-load-balancer-ssl-negotiation-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+
+    # Backend protocol (nginx serves HTTP, NLB terminates TLS)
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: "tcp"
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: {{FRONTEND_PORT}}
+      protocol: TCP
+    - name: https
+      port: 443
+      targetPort: {{FRONTEND_PORT}}
+      protocol: TCP
+  selector:
+    app: {{APP_NAME}}-frontend

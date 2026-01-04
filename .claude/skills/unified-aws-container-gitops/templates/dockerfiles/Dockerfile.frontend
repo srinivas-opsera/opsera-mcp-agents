@@ -1,0 +1,45 @@
+# React/Vite Frontend Dockerfile with Nginx
+# Includes verified fixes for read-only filesystem
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files (package-lock.json REQUIRED for npm ci)
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source
+COPY . .
+
+# Build for production
+RUN npm run build
+
+FROM nginx:alpine
+
+# Copy built assets
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy nginx configuration (for API proxy)
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# CRITICAL: Create directories for nginx to write to
+# This fixes "Read-only file system" errors with security contexts
+RUN mkdir -p /var/cache/nginx/client_temp \
+             /var/cache/nginx/proxy_temp \
+             /var/cache/nginx/fastcgi_temp \
+             /var/cache/nginx/uwsgi_temp \
+             /var/cache/nginx/scgi_temp \
+    && chown -R nginx:nginx /var/cache/nginx \
+    && chown -R nginx:nginx /var/run
+
+EXPOSE 3000
+
+# Note: K8s deployment should add emptyDir volumes for:
+# - /var/cache/nginx
+# - /var/run
+# - /tmp
+
+CMD ["nginx", "-g", "daemon off;"]

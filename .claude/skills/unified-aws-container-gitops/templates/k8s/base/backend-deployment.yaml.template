@@ -1,0 +1,82 @@
+# Backend Deployment Template
+# Replace: {{APP_NAME}}, {{BACKEND_PORT}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{APP_NAME}}-backend
+  labels:
+    app: {{APP_NAME}}-backend
+    app.kubernetes.io/name: {{APP_NAME}}-backend
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{APP_NAME}}-backend
+  template:
+    metadata:
+      labels:
+        app: {{APP_NAME}}-backend
+    spec:
+      # Security: Run as non-root
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: backend
+          image: {{APP_NAME}}-backend:latest
+          ports:
+            - containerPort: {{BACKEND_PORT}}
+              protocol: TCP
+
+          # Security context per container
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # CRITICAL: Mount writable /tmp for gunicorn/uvicorn
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{BACKEND_PORT}}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{BACKEND_PORT}}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          env:
+            - name: PORT
+              value: "{{BACKEND_PORT}}"
+
+      # CRITICAL: emptyDir for temp files (fixes FileNotFoundError)
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,98 @@
+# =============================================================================
+# ARGOCD APPLICATIONSET - MULTI-ENVIRONMENT DEPLOYMENT
+# =============================================================================
+# This ApplicationSet automatically creates ArgoCD Applications for each
+# environment (dev, staging, prod) from a single template.
+#
+# Benefits:
+#   - Single configuration for all environments
+#   - Automatic creation of new environment apps
+#   - Consistent settings across environments
+#   - Easy to add new environments
+#
+# Replace:
+#   {{APP_NAME}} - Your application name
+#   {{REPO_URL}} - Git repository URL
+#   {{GITHUB_ORG}} - GitHub organization
+#
+# =============================================================================
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{APP_NAME}}-environments
+  namespace: argocd
+spec:
+  generators:
+    - list:
+        elements:
+          # Development environment
+          - env: dev
+            branch: main
+            replicas: "1"
+            namespace: "{{APP_NAME}}-dev"
+            syncPolicy: automated
+
+          # Staging environment
+          - env: staging
+            branch: main
+            replicas: "2"
+            namespace: "{{APP_NAME}}-staging"
+            syncPolicy: automated
+
+          # Production environment
+          - env: prod
+            branch: main
+            replicas: "3"
+            namespace: "{{APP_NAME}}-prod"
+            syncPolicy: manual  # Production requires manual approval
+
+  template:
+    metadata:
+      name: "{{APP_NAME}}-{{env}}"
+      namespace: argocd
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+      labels:
+        app.kubernetes.io/name: "{{APP_NAME}}"
+        environment: "{{env}}"
+    spec:
+      project: default
+
+      source:
+        repoURL: "{{REPO_URL}}"
+        targetRevision: "{{branch}}"
+        path: "k8s/overlays/{{env}}"
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{namespace}}"
+
+      syncPolicy:
+        # Conditionally apply automation based on environment
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - PrunePropagationPolicy=foreground
+          - PruneLast=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+
+      # Ignore differences for dynamic fields
+      ignoreDifferences:
+        - group: ""
+          kind: Service
+          jsonPointers:
+            - /spec/clusterIP
+            - /spec/clusterIPs
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/template/metadata/annotations

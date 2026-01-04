@@ -1,0 +1,221 @@
+#!/bin/bash
+# Unified AWS Container GitOps - Idempotent Setup Script
+# Usage: ./setup.sh <app-name> [github-org] [github-repo]
+#
+# This script is FULLY IDEMPOTENT - safe to run multiple times
+
+set -e
+
+# ===================================================
+# CONFIGURATION
+# ===================================================
+APP_NAME="${1:?Usage: ./setup.sh <app-name> [github-org] [github-repo]}"
+GITHUB_ORG="${2:-opsera-salesengg}"
+GITHUB_REPO="${3:-$APP_NAME}"
+BRANCH_NAME="${4:-$APP_NAME}"
+
+# Pre-configured infrastructure values (DO NOT CHANGE)
+AWS_ACCOUNT_ID="792373136340"
+ECR_REGION="us-west-2"
+EKS_REGION="us-west-1"
+EKS_CLUSTER="argocd-nonprod-eks"
+HOSTED_ZONE_ID="Z00814191D1XSXELJVTKT"
+DOMAIN="opsera-labs.com"
+ACM_CERT_ARN="arn:aws:acm:us-west-1:792373136340:certificate/817da31f-83bb-44f2-b8b8-ae4372cff9bd"
+
+# Derived values
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${ECR_REGION}.amazonaws.com"
+ENDPOINT="https://${APP_NAME}.agents.${DOMAIN}"
+
+echo ""
+echo "========================================"
+echo "  UNIFIED AWS CONTAINER GITOPS SETUP"
+echo "========================================"
+echo "  App Name:    $APP_NAME"
+echo "  Endpoint:    $ENDPOINT"
+echo "  GitHub:      $GITHUB_ORG/$GITHUB_REPO"
+echo "  Branch:      $BRANCH_NAME"
+echo "========================================"
+echo ""
+
+# ===================================================
+# HELPER FUNCTIONS
+# ===================================================
+
+log_step() {
+    echo ""
+    echo ">>> $1"
+    echo ""
+}
+
+log_skip() {
+    echo "    [SKIP] $1"
+}
+
+log_create() {
+    echo "    [CREATE] $1"
+}
+
+log_update() {
+    echo "    [UPDATE] $1"
+}
+
+# ===================================================
+# STEP 1: CREATE ECR REPOSITORIES (IDEMPOTENT)
+# ===================================================
+log_step "Step 1: Creating ECR repositories"
+
+for REPO_SUFFIX in "" "-backend" "-frontend"; do
+    REPO_NAME="${APP_NAME}${REPO_SUFFIX}"
+
+    if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$ECR_REGION" 2>/dev/null; then
+        log_skip "ECR repository $REPO_NAME already exists"
+    else
+        aws ecr create-repository \
+            --repository-name "$REPO_NAME" \
+            --region "$ECR_REGION" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256 > /dev/null
+        log_create "ECR repository $REPO_NAME"
+    fi
+done
+
+# ===================================================
+# STEP 2: SET GITHUB SECRETS (IDEMPOTENT)
+# ===================================================
+log_step "Step 2: Setting GitHub secrets"
+
+FULL_REPO="${GITHUB_ORG}/${GITHUB_REPO}"
+
+# Check if secrets exist and update if needed
+if gh secret list --repo "$FULL_REPO" 2>/dev/null | grep -q "AWS_ACCESS_KEY_ID"; then
+    log_skip "GitHub secrets already configured"
+else
+    AWS_ACCESS_KEY=$(aws configure get aws_access_key_id 2>/dev/null || echo "")
+    AWS_SECRET_KEY=$(aws configure get aws_secret_access_key 2>/dev/null || echo "")
+
+    if [ -n "$AWS_ACCESS_KEY" ] && [ -n "$AWS_SECRET_KEY" ]; then
+        gh secret set AWS_ACCESS_KEY_ID --repo "$FULL_REPO" --body "$AWS_ACCESS_KEY"
+        gh secret set AWS_SECRET_ACCESS_KEY --repo "$FULL_REPO" --body "$AWS_SECRET_KEY"
+        log_create "GitHub secrets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+    else
+        echo "    [WARN] AWS credentials not found in local config. Set manually:"
+        echo "    gh secret set AWS_ACCESS_KEY_ID --repo $FULL_REPO"
+        echo "    gh secret set AWS_SECRET_ACCESS_KEY --repo $FULL_REPO"
+    fi
+fi
+
+# ===================================================
+# STEP 3: CONNECT TO EKS CLUSTER
+# ===================================================
+log_step "Step 3: Connecting to EKS cluster"
+
+aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$EKS_REGION" > /dev/null
+echo "    Connected to $EKS_CLUSTER"
+
+# ===================================================
+# STEP 4: CREATE ARGOCD REPOSITORY SECRET (IDEMPOTENT)
+# ===================================================
+log_step "Step 4: Creating ArgoCD repository secret"
+
+SECRET_NAME="repo-${APP_NAME}"
+REPO_URL="https://github.com/${FULL_REPO}.git"
+
+if kubectl get secret "$SECRET_NAME" -n argocd 2>/dev/null; then
+    log_skip "ArgoCD secret $SECRET_NAME already exists"
+else
+    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+
+    if [ -z "$GH_TOKEN" ]; then
+        echo "    [ERROR] GitHub token not found. Run 'gh auth login' first."
+        exit 1
+    fi
+
+    kubectl create secret generic "$SECRET_NAME" \
+        --namespace argocd \
+        --from-literal=type=git \
+        --from-literal=url="$REPO_URL" \
+        --from-literal=username=git \
+        --from-literal=password="$GH_TOKEN" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl label secret "$SECRET_NAME" -n argocd \
+        argocd.argoproj.io/secret-type=repository --overwrite
+
+    log_create "ArgoCD secret $SECRET_NAME"
+fi
+
+# ===================================================
+# STEP 5: APPLY ARGOCD APPLICATION (IDEMPOTENT)
+# ===================================================
+log_step "Step 5: Applying ArgoCD application"
+
+if kubectl get application "$APP_NAME" -n argocd 2>/dev/null; then
+    log_skip "ArgoCD application $APP_NAME already exists"
+else
+    # Generate ArgoCD application manifest
+    cat << EOF | kubectl apply -f -
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ${APP_NAME}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ${REPO_URL}
+    targetRevision: ${BRANCH_NAME}
+    path: k8s/overlays/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ${APP_NAME}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+EOF
+    log_create "ArgoCD application $APP_NAME"
+fi
+
+# ===================================================
+# SUMMARY
+# ===================================================
+echo ""
+echo "========================================"
+echo "  SETUP COMPLETE!"
+echo "========================================"
+echo ""
+echo "  Resources created:"
+echo "    - ECR: ${ECR_REGISTRY}/${APP_NAME}"
+echo "    - ECR: ${ECR_REGISTRY}/${APP_NAME}-backend"
+echo "    - ECR: ${ECR_REGISTRY}/${APP_NAME}-frontend"
+echo "    - ArgoCD App: ${APP_NAME}"
+echo "    - ArgoCD Secret: repo-${APP_NAME}"
+echo ""
+echo "  Next steps:"
+echo "    1. git checkout -b $BRANCH_NAME"
+echo "    2. Add your code with Dockerfile"
+echo "    3. Add k8s/ manifests"
+echo "    4. git push -u origin $BRANCH_NAME"
+echo ""
+echo "  After push, CI/CD will:"
+echo "    - Build and test"
+echo "    - Push to ECR"
+echo "    - Update k8s/overlays/dev/kustomization.yaml"
+echo "    - ArgoCD will sync to cluster"
+echo "    - ExternalDNS will create DNS record"
+echo ""
+echo "  Final URL: $ENDPOINT"
+echo ""
+echo "========================================"

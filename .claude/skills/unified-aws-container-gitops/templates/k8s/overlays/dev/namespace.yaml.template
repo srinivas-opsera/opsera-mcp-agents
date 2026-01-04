@@ -1,0 +1,10 @@
+# Namespace definition
+# Replace: {{APP_NAME}}
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{APP_NAME}}
+  labels:
+    app.kubernetes.io/name: {{APP_NAME}}
+    environment: dev

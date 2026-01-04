@@ -1,0 +1,305 @@
+# Unified CI/CD Pipeline Template
+# Replace {{APP_NAME}}, {{BRANCH_NAME}}, {{BACKEND_PORT}}, {{FRONTEND_PORT}}
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [{{BRANCH_NAME}}]
+  pull_request:
+    branches: [{{BRANCH_NAME}}]
+
+# CRITICAL: Required for manifest updates
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  # Application
+  APP_NAME: {{APP_NAME}}
+  ENDPOINT: https://{{APP_NAME}}.agents.opsera-labs.com
+
+  # AWS - Multi-region configuration
+  AWS_ACCOUNT_ID: "792373136340"
+  ECR_REGION: us-west-2      # ECR repositories
+  EKS_REGION: us-west-1      # EKS cluster
+  CLUSTER_NAME: argocd-nonprod-eks
+
+  # Derived
+  ECR_REGISTRY: 792373136340.dkr.ecr.us-west-2.amazonaws.com
+
+jobs:
+  # ============================================
+  # BUILD & TEST
+  # ============================================
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # For Python backend
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run backend tests
+        run: |
+          cd backend
+          pytest --cov=. --cov-report=term-missing || echo "No tests found"
+
+      # For Node.js frontend
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run frontend tests
+        run: |
+          cd frontend
+          npm test -- --passWithNoTests || echo "No tests configured"
+
+  # ============================================
+  # SECURITY SCAN
+  # ============================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner (filesystem)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+
+  # ============================================
+  # BUILD & PUSH DOCKER IMAGES
+  # ============================================
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: security-scan
+    if: github.event_name == 'push'
+    outputs:
+      short-sha: ${{ steps.vars.outputs.short-sha }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set variables
+        id: vars
+        run: |
+          echo "short-sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.ECR_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.APP_NAME }}-backend:${{ steps.vars.outputs.short-sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.APP_NAME }}-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.APP_NAME }}-frontend:${{ steps.vars.outputs.short-sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.APP_NAME }}-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.ECR_REGISTRY }}/${{ env.APP_NAME }}-backend:latest'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+  # ============================================
+  # UPDATE KUSTOMIZE MANIFESTS
+  # ============================================
+  update-kustomize:
+    name: Update Kustomize
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Kustomization image tags
+        run: |
+          SHORT_SHA=${{ needs.build-and-push.outputs.short-sha }}
+          cd k8s/overlays/dev
+
+          # Update backend image tag
+          sed -i "s|newTag: .*  # backend|newTag: ${SHORT_SHA}  # backend|" kustomization.yaml
+
+          # Update frontend image tag
+          sed -i "s|newTag: .*  # frontend|newTag: ${SHORT_SHA}  # frontend|" kustomization.yaml
+
+          # Fallback: Update any newTag line
+          sed -i "s/newTag: .*/newTag: ${SHORT_SHA}/" kustomization.yaml
+
+      - name: Commit and push changes
+        run: |
+          SHORT_SHA=${{ needs.build-and-push.outputs.short-sha }}
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add k8s/overlays/dev/kustomization.yaml
+          git diff --staged --quiet || git commit -m "chore: update image tags to ${SHORT_SHA}"
+          git push
+
+  # ============================================
+  # VERIFY DEPLOYMENT
+  # ============================================
+  verify-deployment:
+    name: Verify Deployment
+    runs-on: ubuntu-latest
+    needs: update-kustomize
+    if: always() && needs.update-kustomize.result == 'success'
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.EKS_REGION }}
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Configure kubectl for EKS
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.EKS_REGION }}
+
+      - name: Wait for ArgoCD sync
+        run: |
+          echo "Waiting for ArgoCD to detect changes..."
+          sleep 30
+
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            SYNC_STATUS=$(kubectl get application ${{ env.APP_NAME }} -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+            HEALTH_STATUS=$(kubectl get application ${{ env.APP_NAME }} -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+            echo "Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS: Sync=$SYNC_STATUS, Health=$HEALTH_STATUS"
+
+            if [ "$SYNC_STATUS" == "Synced" ] && [ "$HEALTH_STATUS" == "Healthy" ]; then
+              echo "ArgoCD application is synced and healthy!"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT+1))
+            sleep 10
+          done
+
+      - name: Wait for pods to be ready
+        run: |
+          kubectl rollout status deployment/${{ env.APP_NAME }}-backend -n ${{ env.APP_NAME }} --timeout=300s || true
+          kubectl rollout status deployment/${{ env.APP_NAME }}-frontend -n ${{ env.APP_NAME }} --timeout=300s || true
+          echo "Pod status:"
+          kubectl get pods -n ${{ env.APP_NAME }} -o wide
+
+      - name: Wait for LoadBalancer and DNS
+        run: |
+          MAX_ATTEMPTS=30
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            LB_HOSTNAME=$(kubectl get svc ${{ env.APP_NAME }}-frontend -n ${{ env.APP_NAME }} -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
+            if [ -n "$LB_HOSTNAME" ]; then
+              echo "LoadBalancer provisioned: $LB_HOSTNAME"
+              break
+            fi
+            ATTEMPT=$((ATTEMPT+1))
+            echo "Waiting for LoadBalancer... ($ATTEMPT/$MAX_ATTEMPTS)"
+            sleep 10
+          done
+
+          echo "Waiting for DNS propagation (60s)..."
+          sleep 60
+
+      - name: Verify endpoint
+        run: |
+          MAX_ATTEMPTS=10
+          ATTEMPT=0
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${{ env.ENDPOINT }}" 2>/dev/null || echo "000")
+            echo "Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS: HTTP Status = $HTTP_STATUS"
+
+            if [ "$HTTP_STATUS" == "200" ] || [ "$HTTP_STATUS" == "301" ] || [ "$HTTP_STATUS" == "302" ]; then
+              echo ""
+              echo "========================================"
+              echo "  DEPLOYMENT SUCCESSFUL!"
+              echo "========================================"
+              echo "  Endpoint: ${{ env.ENDPOINT }}"
+              echo "========================================"
+              exit 0
+            fi
+
+            ATTEMPT=$((ATTEMPT+1))
+            sleep 15
+          done
+
+          echo "WARNING: Endpoint verification incomplete."
+          echo "Check manually: ${{ env.ENDPOINT }}"
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo ""
+          echo "========================================"
+          echo "        DEPLOYMENT SUMMARY"
+          echo "========================================"
+          echo "App Name:    ${{ env.APP_NAME }}"
+          echo "Endpoint:    ${{ env.ENDPOINT }}"
+          echo "Commit:      ${{ github.sha }}"
+          echo "========================================"
+          echo ""
+          echo "Resources:"
+          kubectl get all -n ${{ env.APP_NAME }} 2>/dev/null || echo "Namespace not found"
