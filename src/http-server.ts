@@ -332,6 +332,157 @@ k8s/
     `.trim(),
   },
 
+  "slack-notifications": {
+    description: "Configure Slack notifications for CI/CD workflows with customizable triggers and rich message formatting",
+    content: `
+# Slack Notifications Integration Expert
+
+You are an expert DevOps engineer specializing in CI/CD observability and notification systems. Configure Slack notifications following best practices for deployment visibility.
+
+## Prerequisites
+
+### 1. Create Slack Webhook
+1. Go to https://api.slack.com/apps
+2. Create a new app or select existing
+3. Navigate to **Incoming Webhooks**
+4. Activate incoming webhooks
+5. Click **Add New Webhook to Workspace**
+6. Select the target channel (e.g., \`#deployments\`)
+7. Copy the webhook URL
+
+### 2. Add GitHub Secret
+\`\`\`bash
+# Secret Name: SLACK_WEBHOOK_URL
+gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/services/..."
+\`\`\`
+
+## Configuration Options
+
+When setting up Slack notifications, collect these inputs:
+
+| Option | Values | Description |
+|--------|--------|-------------|
+| **enabled** | true/false | Enable Slack notifications |
+| **channel** | #channel-name | Target Slack channel |
+| **scope** | all_jobs / single_step | Notify for all jobs or specific step |
+| **trigger** | success / failure / both | When to send notifications |
+
+## Notification Templates
+
+### Deployment Success
+\`\`\`yaml
+- name: Slack Notification (Success)
+  if: \${{ inputs.enable_slack_notifications && success() }}
+  uses: slackapi/slack-github-action@v1.25.0
+  with:
+    channel-id: '#deployments'
+    payload: |
+      {
+        "text": "✅ Deployment *succeeded* for \\\`\${{ env.APP_NAME }}\\\`",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*✅ Deployment Succeeded*\\n• App: \\\`\${{ env.APP_NAME }}\\\`\\n• Env: \\\`\${{ env.APP_ENV }}\\\`\\n• Branch: \\\`\${{ github.ref_name }}\\\`\\n• Commit: \\\`\${{ github.sha }}\\\`\\n• Workflow: <\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}|View Run>"
+            }
+          }
+        ]
+      }
+  env:
+    SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
+\`\`\`
+
+### Deployment Failure
+\`\`\`yaml
+- name: Slack Notification (Failure)
+  if: \${{ inputs.enable_slack_notifications && failure() }}
+  uses: slackapi/slack-github-action@v1.25.0
+  with:
+    channel-id: '#deployments'
+    payload: |
+      {
+        "text": "❌ Deployment *failed* for \\\`\${{ env.APP_NAME }}\\\`",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*❌ Deployment Failed*\\n• App: \\\`\${{ env.APP_NAME }}\\\`\\n• Env: \\\`\${{ env.APP_ENV }}\\\`\\n• Branch: \\\`\${{ github.ref_name }}\\\`\\n• Workflow: <\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}|View Run>\\n• *Action Required:* Check logs and fix the issue"
+            }
+          }
+        ]
+      }
+  env:
+    SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
+\`\`\`
+
+### Both Success & Failure
+\`\`\`yaml
+- name: Slack Notification
+  if: \${{ inputs.enable_slack_notifications && (success() || failure()) }}
+  uses: slackapi/slack-github-action@v1.25.0
+  with:
+    channel-id: '#deployments'
+    payload: |
+      {
+        "text": "Deployment *\${{ job.status }}* for \\\`\${{ env.APP_NAME }}\\\`",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*Deployment Status: \${{ github.job }}*\\n• App: \\\`\${{ env.APP_NAME }}\\\`\\n• Env: \\\`\${{ env.APP_ENV }}\\\`\\n• Status: *\${{ job.status }}*\\n• Branch: \\\`\${{ github.ref_name }}\\\`\\n• Workflow: <\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}|View Run>"
+            }
+          }
+        ]
+      }
+  env:
+    SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
+\`\`\`
+
+## Integration Points for AWS EKS Deployments
+
+Add notifications at these key phases:
+
+1. **Infrastructure Phase**: After Terraform apply
+2. **Build Phase**: After Docker push to ECR  
+3. **Deploy Phase**: After ArgoCD sync
+4. **Verification Phase**: After endpoint health check
+
+## Workflow Input Toggle
+
+Add this to enable per-run control:
+
+\`\`\`yaml
+on:
+  workflow_dispatch:
+    inputs:
+      enable_slack_notifications:
+        description: 'Enable Slack notifications'
+        type: boolean
+        default: true
+\`\`\`
+
+## Best Practices
+
+1. **Use Workflow Input Toggle**: Allow users to enable/disable notifications per run
+2. **Include Direct Links**: Always link to the workflow run for quick access
+3. **Context-Rich Messages**: Include app name, environment, branch, and commit
+4. **Failure Emphasis**: Make failure notifications stand out with clear action items
+5. **Channel Separation**: Consider separate channels for dev/staging/prod
+6. **Rate Limiting**: Avoid notification fatigue by being selective about triggers
+
+## Security
+
+- Store webhook URLs ONLY as GitHub Secrets
+- Don't include sensitive data in messages
+- Slack messages serve as deployment audit trail
+
+Now generate the appropriate Slack notification configuration based on the user's requirements.
+    `.trim(),
+  },
+
   "dora-report": {
     description: "Generate comprehensive DORA metrics report with performance analysis and improvement recommendations",
     content: `
@@ -465,6 +616,52 @@ Now analyze this repository and provide the DORA metrics report.
 
 const PROTECTED_TOOLS = [
   {
+    name: "opsera_slack_notify",
+    description: "Configure Slack notifications for CI/CD workflows with customizable triggers, channels, and rich message formatting. Integrates with AWS EKS deployments, security scans, and DORA metrics.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        enabled: {
+          type: "boolean",
+          description: "Enable Slack notifications",
+          default: true,
+        },
+        channel: {
+          type: "string",
+          description: "Slack channel (e.g., #deployments, #alerts)",
+        },
+        trigger: {
+          type: "string",
+          description: "When to send notifications",
+          enum: ["success", "failure", "both"],
+          default: "both",
+        },
+        scope: {
+          type: "string",
+          description: "Notification scope",
+          enum: ["all_jobs", "single_step", "deployment", "security", "infrastructure"],
+          default: "all_jobs",
+        },
+        event_type: {
+          type: "string",
+          description: "Type of event to notify about",
+          enum: ["deployment", "security_scan", "infrastructure", "dora_metrics", "custom"],
+          default: "deployment",
+        },
+        app_name: {
+          type: "string",
+          description: "Application name for context in notifications",
+        },
+        environment: {
+          type: "string",
+          description: "Deployment environment (dev, staging, prod)",
+          enum: ["dev", "staging", "prod"],
+        },
+      },
+      required: ["channel"],
+    },
+  },
+  {
     name: "opsera_create_pipeline",
     description: "Create a production-ready CI/CD pipeline",
     inputSchema: {
@@ -482,6 +679,21 @@ const PROTECTED_TOOLS = [
         deployment_target: {
           type: "string",
           description: "Deployment target (kubernetes, docker, serverless, vm)",
+        },
+        enable_slack_notifications: {
+          type: "boolean",
+          description: "Enable Slack notifications for the pipeline",
+          default: false,
+        },
+        slack_channel: {
+          type: "string",
+          description: "Slack channel for notifications (if enabled)",
+        },
+        slack_trigger: {
+          type: "string",
+          description: "When to send Slack notifications",
+          enum: ["success", "failure", "both"],
+          default: "both",
         },
       },
       required: ["platform"],
@@ -589,10 +801,101 @@ function createMCPServer(): Server {
     const { name, arguments: args } = request.params;
 
     switch (name) {
+      case "opsera_slack_notify": {
+        const channel = (args as any)?.channel || "#deployments";
+        const trigger = (args as any)?.trigger || "both";
+        const scope = (args as any)?.scope || "all_jobs";
+        const eventType = (args as any)?.event_type || "deployment";
+        const appName = (args as any)?.app_name || "{{APP_NAME}}";
+        const environment = (args as any)?.environment || "dev";
+
+        return {
+          content: [{
+            type: "text" as const,
+            text: `# Slack Notifications Configuration
+
+## Configuration
+- **Channel**: ${channel}
+- **Trigger**: ${trigger}
+- **Scope**: ${scope}
+- **Event Type**: ${eventType}
+- **App Name**: ${appName}
+- **Environment**: ${environment}
+
+${PROTECTED_PROMPTS["slack-notifications"].content}
+
+---
+
+## Generated Notification Step
+
+Based on your configuration, add this step to your GitHub Actions workflow:
+
+\`\`\`yaml
+# Workflow input to toggle notifications
+on:
+  workflow_dispatch:
+    inputs:
+      enable_slack_notifications:
+        description: 'Enable Slack notifications'
+        type: boolean
+        default: true
+
+# Add this step at the end of your job
+- name: Slack Notification
+  if: \${{ inputs.enable_slack_notifications && ${trigger === 'both' ? '(success() || failure())' : trigger === 'success' ? 'success()' : 'failure()'} }}
+  uses: slackapi/slack-github-action@v1.25.0
+  with:
+    channel-id: '${channel}'
+    payload: |
+      {
+        "text": "${trigger === 'success' ? '✅' : trigger === 'failure' ? '❌' : '${{ job.status == \\'success\\' && \\'✅\\' || \\'❌\\' }}'} ${eventType === 'deployment' ? 'Deployment' : eventType === 'security_scan' ? 'Security Scan' : eventType === 'infrastructure' ? 'Infrastructure Update' : 'Event'} *\${{ job.status }}* for \\\`${appName}\\\`",
+        "blocks": [
+          {
+            "type": "section",
+            "text": {
+              "type": "mrkdwn",
+              "text": "*${eventType === 'deployment' ? 'Deployment' : eventType === 'security_scan' ? 'Security Scan' : eventType === 'infrastructure' ? 'Infrastructure' : 'Event'} Status*\\n• App: \\\`${appName}\\\`\\n• Env: \\\`${environment}\\\`\\n• Status: *\${{ job.status }}*\\n• Branch: \\\`\${{ github.ref_name }}\\\`\\n• Workflow: <\${{ github.server_url }}/\${{ github.repository }}/actions/runs/\${{ github.run_id }}|View Run>"
+            }
+          }
+        ]
+      }
+  env:
+    SLACK_WEBHOOK_URL: \${{ secrets.SLACK_WEBHOOK_URL }}
+\`\`\`
+
+## Required Secret
+
+⚠️ Add this secret to your repository:
+
+| Secret Name | Value |
+|-------------|-------|
+| \`SLACK_WEBHOOK_URL\` | Your Slack Incoming Webhook URL |
+
+**Setup Webhook:**
+1. Go to https://api.slack.com/apps
+2. Create app → Incoming Webhooks → Add to Workspace
+3. Select channel: ${channel}
+4. Copy webhook URL and add as GitHub secret`,
+          }],
+        };
+      }
+
       case "opsera_create_pipeline": {
         const platform = (args as any)?.platform || "github-actions";
         const language = (args as any)?.language || "auto-detect";
         const target = (args as any)?.deployment_target || "kubernetes";
+        const enableSlack = (args as any)?.enable_slack_notifications || false;
+        const slackChannel = (args as any)?.slack_channel || "#deployments";
+        const slackTrigger = (args as any)?.slack_trigger || "both";
+
+        const slackSection = enableSlack ? `
+
+## Slack Notifications (Enabled)
+- **Channel**: ${slackChannel}
+- **Trigger**: ${slackTrigger}
+
+The pipeline will include Slack notifications. Make sure to add the \`SLACK_WEBHOOK_URL\` secret to your repository.
+` : '';
 
         return {
           content: [{
@@ -603,11 +906,11 @@ function createMCPServer(): Server {
 - **Platform**: ${platform}
 - **Language**: ${language}
 - **Deployment Target**: ${target}
-
+${slackSection}
 ${PROTECTED_PROMPTS["create-pipeline"].content}
 
 ---
-Now analyze this project and generate a production-ready ${platform} pipeline.`,
+Now analyze this project and generate a production-ready ${platform} pipeline${enableSlack ? ' with Slack notifications' : ''}.`,
           }],
         };
       }
@@ -769,7 +1072,8 @@ app.post("/tools/call", authenticate, (req, res) => {
 
   const prompt = name === "opsera_create_pipeline" ? "create-pipeline" :
                  name === "opsera_security_scan" ? "security-audit" :
-                 name === "opsera_dora_metrics" ? "dora-report" : null;
+                 name === "opsera_dora_metrics" ? "dora-report" :
+                 name === "opsera_slack_notify" ? "slack-notifications" : null;
 
   if (!prompt || !PROTECTED_PROMPTS[prompt]) {
     res.status(404).json({ error: `Unknown tool: ${name}` });
@@ -797,8 +1101,11 @@ app.listen(PORT, () => {
 ║  SSE:  GET  /sse                                             ║
 ║  Msg:  POST /message                                         ║
 ╠══════════════════════════════════════════════════════════════╣
-║  Tools: opsera_create_pipeline, opsera_security_scan,        ║
-║         opsera_dora_metrics                                  ║
+║  Tools:                                                      ║
+║    • opsera_slack_notify      - Slack notifications          ║
+║    • opsera_create_pipeline   - CI/CD pipeline generation    ║
+║    • opsera_security_scan     - Security scanning            ║
+║    • opsera_dora_metrics      - DORA metrics                 ║
 ╚══════════════════════════════════════════════════════════════╝
   `);
 });

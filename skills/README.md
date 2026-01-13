@@ -6,12 +6,24 @@ This directory contains documented skills and best practices learned from deploy
 
 | Skill | Description | Key Learnings |
 |-------|-------------|---------------|
+| [Slack Notifications](./slack-notifications/SKILL.md) | **NEW** Configurable Slack notifications for CI/CD workflows | Webhook setup, trigger configuration, rich message formatting |
 | [Opsera run_script Limitations](./opsera-run-script-limitations.md) | Understanding the limitations of Opsera's run_script tool | AWS creds not auto-injected, no git clone, manual tool installation required |
 | [Opsera Pipeline Creation](./opsera-pipeline-creation.md) | API best practices for creating Opsera pipelines | Valid ObjectId format, correct field names, native Terraform config |
 | [Terraform EKS Deployment](./terraform-eks-deployment.md) | Best practices for deploying EKS with Terraform | S3 backend, importing existing resources, common errors |
 | [ArgoCD Multi-Tenant GitOps](./argocd-multi-tenant-gitops.md) | Setting up multi-tenant GitOps architecture | App-of-Apps pattern, ApplicationSets, tenant isolation |
 | [Idempotent Deployment Scripts](./idempotent-deployment-scripts.md) | Writing scripts that can be run multiple times safely | Check-before-create patterns, non-interactive flags |
 | [AWS Resource Cleanup](./aws-resource-cleanup.md) | Safe patterns for cleaning up AWS resources | Dependency order, VPC cleanup, cost savings |
+
+## MCP Tools
+
+The Opsera MCP server exposes the following tools:
+
+| Tool | Description |
+|------|-------------|
+| `opsera_slack_notify` | Configure Slack notifications for CI/CD workflows |
+| `opsera_create_pipeline` | Create production-ready CI/CD pipelines |
+| `opsera_security_scan` | Run comprehensive security scans |
+| `opsera_dora_metrics` | Generate DORA metrics reports |
 
 ## Quick Reference
 

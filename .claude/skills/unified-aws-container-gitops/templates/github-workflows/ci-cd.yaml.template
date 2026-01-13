@@ -1,5 +1,6 @@
 # Unified CI/CD Pipeline Template
 # Replace {{APP_NAME}}, {{BRANCH_NAME}}, {{BACKEND_PORT}}, {{FRONTEND_PORT}}
+# Slack Notifications: Set SLACK_WEBHOOK_URL secret and configure channel below
 
 name: CI/CD Pipeline
 
@@ -8,6 +9,16 @@ on:
     branches: [{{BRANCH_NAME}}]
   pull_request:
     branches: [{{BRANCH_NAME}}]
+  workflow_dispatch:
+    inputs:
+      enable_slack_notifications:
+        description: 'Enable Slack notifications'
+        type: boolean
+        default: true
+      slack_channel:
+        description: 'Slack channel for notifications'
+        type: string
+        default: '#deployments'
 
 # CRITICAL: Required for manifest updates
 permissions:
@@ -303,3 +314,43 @@ jobs:
           echo ""
           echo "Resources:"
           kubectl get all -n ${{ env.APP_NAME }} 2>/dev/null || echo "Namespace not found"
+
+      # ============================================
+      # SLACK NOTIFICATION
+      # ============================================
+      - name: Slack Notification
+        if: ${{ (inputs.enable_slack_notifications || github.event_name == 'push') && (success() || failure()) }}
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          channel-id: ${{ inputs.slack_channel || '#deployments' }}
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Deployment *${{ job.status }}* for `${{ env.APP_NAME }}`",
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "${{ job.status == 'success' && '✅ Deployment Successful' || '❌ Deployment Failed' }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    { "type": "mrkdwn", "text": "*App:*\n`${{ env.APP_NAME }}`" },
+                    { "type": "mrkdwn", "text": "*Environment:*\n`dev`" },
+                    { "type": "mrkdwn", "text": "*Branch:*\n`${{ github.ref_name }}`" },
+                    { "type": "mrkdwn", "text": "*Commit:*\n`${{ github.sha }}`" }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Endpoint:* ${{ env.ENDPOINT }}\n*Workflow:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
